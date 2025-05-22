@@ -14,6 +14,10 @@ class Canteen extends Model
         'current_balance',
         'is_settled',
         'settlement_time',
+        'opened_by',
+        'opened_at',
+        'closed_at',
+        'note',
     ];
 
     protected $casts = [
@@ -21,10 +25,17 @@ class Canteen extends Model
         'current_balance' => 'decimal:2',
         'is_settled' => 'boolean',
         'settlement_time' => 'datetime',
+        'opened_at' => 'datetime',
+        'closed_at' => 'datetime',
     ];
 
     public function transactions()
     {
         return $this->hasMany(Transaction::class, 'canteen_id');
+    }
+
+    public function opener()
+    {
+        return $this->belongsTo(User::class, 'opened_by');
     }
 }

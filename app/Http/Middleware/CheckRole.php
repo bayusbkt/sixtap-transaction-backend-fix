@@ -20,8 +20,8 @@ class CheckRole
 
         if (!$user || !in_array($user['role_name'], $roles)) {
             return response()->json([
-                'error' => 'Akses ditolak.',
-                'message' => 'Anda tidak memiliki izin untuk mengakses resource ini.'
+                'status' => 'error',
+                'message' => 'Akses ditolak. Anda tidak memiliki izin untuk mengakses resource ini.'
             ], Response::HTTP_FORBIDDEN);
         }
 

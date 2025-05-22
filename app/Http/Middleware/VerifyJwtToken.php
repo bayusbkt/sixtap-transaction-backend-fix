@@ -15,20 +15,24 @@ class VerifyJwtToken
     {
         $authHeader = $request->header('Authorization');
         if (!$authHeader || !str_starts_with($authHeader, 'Bearer ')) {
-            return response()->json(['error' => 'Token tidak ditemukan.'], 401);
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Token tidak ditemukan.'
+                ], 401);
         }
 
         $token = substr($authHeader, 7);
         try {
-            $decoded = JWT::decode($token, new Key(env('JWT_SECRET'), 'HS256'));
+            $decoded = JWT::decode($token, new Key(config('jwt.secret'), 'HS256'));
 
             $request->merge(['auth_user' => (array) $decoded]);
 
             return $next($request);
         } catch (Exception $e) {
             return response()->json([
-                'error' => 'Token tidak valid.',
-                'message' => $e->getMessage()
+                'status' => 'error',
+                'message' => 'Token tidak valid.',
+                'error' => $e->getMessage()
             ], 401);
         }
     }
