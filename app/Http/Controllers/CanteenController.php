@@ -3,9 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Helpers\HandleServiceResponse;
+use App\Helpers\LoginToken;
 use App\Http\Requests\AmountRequest;
 use App\Services\CanteenService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class CanteenController extends Controller
 {
@@ -16,11 +18,39 @@ class CanteenController extends Controller
         $this->canteenService = $canteenService;
     }
 
+    public function openCanteen(Request $request): JsonResponse
+    {
+        $userId = LoginToken::getUserLoginFromToken($request);
+
+        $result = $this->canteenService->requestOpenCanteen($userId);
+
+        return HandleServiceResponse::format($result);
+    }
+
+    public function settleCanteen(Request $request): JsonResponse
+    {
+        $userId = LoginToken::getUserLoginFromToken($request);
+        $note = $request->input('note');
+
+        $result = $this->canteenService->settleCanteen($userId, $note);
+
+        return HandleServiceResponse::format($result);
+    }
+
+    public function closeCanteen(Request $request): JsonResponse
+    {
+        $userId = LoginToken::getUserLoginFromToken($request);
+
+        $result = $this->canteenService->closeCanteen($userId);
+
+        return HandleServiceResponse::format($result);
+    }
+
     public function initialFund(AmountRequest $request): JsonResponse
     {
         $validated = $request->validated();
 
-        $userId = $request->input('auth_user')['id'];
+        $userId = LoginToken::getUserLoginFromToken($request);
 
         $result = $this->canteenService->inputInitialFund($userId, $validated['amount']);
 

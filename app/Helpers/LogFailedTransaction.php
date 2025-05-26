@@ -6,7 +6,7 @@ use App\Models\Transaction;
 
 class LogFailedTransaction
 {
-    public static function format($userId, $cardId, $canteenId, $amount, $type, $note = null): void
+    public static function format($userId, $cardId, $canteenId, $amount, $type, $note): void
     {
         Transaction::create([
             'user_id' => $userId,
