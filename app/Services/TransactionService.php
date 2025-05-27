@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Helpers\HandleEmailNotification;
 use App\Helpers\LogFailedTransaction;
 use App\Models\Canteen;
 use App\Models\RfidCard;
@@ -10,9 +11,10 @@ use App\Models\Wallet;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
+
 class TransactionService
 {
-    public function handleTopUp(string $cardUid, int $amount, ?string $note): array
+    public function handleTopUp(string $cardUid, int $amount): array
     {
         try {
             DB::beginTransaction();
@@ -48,24 +50,29 @@ class TransactionService
                 ];
             }
 
+            $oldBalance = $wallet->balance;
+            $newBalance = $oldBalance + $amount;
+
             $wallet->update([
-                'balance' => $wallet->balance + $amount,
+                'balance' => $newBalance,
                 'last_top_up' => now()
             ]);
 
-            Transaction::create([
+            $transaction = Transaction::create([
                 'user_id' => $card->user_id,
                 'rfid_card_id' => $card->id,
                 'canteen_id' => null,
                 'type' => 'top up',
                 'status' => 'berhasil',
                 'amount' => $amount,
-                'note' => $note
+
             ]);
 
             $dataCard = $card->load('user');
 
             DB::commit();
+
+            HandleEmailNotification::topUp($dataCard->user, $amount, $newBalance, $transaction->id);
 
             return [
                 'status' => 'success',
@@ -288,13 +295,18 @@ class TransactionService
                 ];
             }
 
+            $oldBalance = $wallet->balance;
+            $newBalance = $oldBalance - $amount;
+
             $wallet->update([
-                'balance' => $wallet->balance - $amount
+                'balance' => $newBalance
             ]);
 
             $canteen->update([
                 'current_balance' => $canteen->current_balance + $amount
             ]);
+
+            $canteenOpenerName = $canteen->opener->name;
 
             $transaction = Transaction::create([
                 'user_id' => $card->user_id,
@@ -306,6 +318,8 @@ class TransactionService
             ]);
 
             DB::commit();
+
+            HandleEmailNotification::purchase($card->user, $amount, $newBalance, $transaction->id, $canteenOpenerName);
 
             return [
                 'status' => 'success',
@@ -451,5 +465,228 @@ class TransactionService
             'code' => 200,
             'data' => $transactionHistory
         ];
+    }
+
+    public function handleRefundTransaction(int $transactionId, int $canteenOpenerId, string $note): array
+    {
+
+        try {
+            DB::beginTransaction();
+
+            $originalTransaction = Transaction::where('id', $transactionId)
+                ->where('type', 'pembelian')
+                ->where('status', 'berhasil')
+                ->with(['user', 'rfidCard', 'canteen'])
+                ->first();
+
+            if (!$originalTransaction) {
+                DB::rollback();
+                return [
+                    'status' => 'error',
+                    'message' => 'Transaksi pembelian tidak ditemukan atau sudah di-refund.',
+                    'code' => 404
+                ];
+            }
+
+            $existingRefund = Transaction::where('type', 'refund')
+                ->where('note', 'like', "%Refund untuk transaksi ID: $transactionId%")
+                ->first();
+
+            if ($existingRefund) {
+                DB::rollback();
+                return [
+                    'status' => 'error',
+                    'message' => 'Transaksi ini sudah pernah di-refund.',
+                    'code' => 422
+                ];
+            }
+
+            $canteen = Canteen::where('opened_by', $canteenOpenerId)
+                ->whereNotNull('opened_at')
+                ->whereNull('closed_at')
+                ->latest()
+                ->first();
+
+            if (!$canteen) {
+                DB::rollback();
+                return [
+                    'status' => 'error',
+                    'message' => 'Tidak ada kantin yang sedang dibuka oleh pengguna ini.',
+                    'code' => 404
+                ];
+            }
+
+            if ($originalTransaction->canteen_id !== $canteen->id) {
+                DB::rollback();
+                return [
+                    'status' => 'error',
+                    'message' => 'Refund hanya dapat dilakukan di kantin tempat transaksi asli.',
+                    'code' => 422
+                ];
+            }
+
+            if ($canteen->current_balance < $originalTransaction->amount) {
+                DB::rollback();
+                return [
+                    'status' => 'error',
+                    'message' => 'Saldo kantin tidak mencukupi untuk melakukan refund.',
+                    'code' => 422
+                ];
+            }
+
+            $wallet = Wallet::where('user_id', $originalTransaction->user_id)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$wallet) {
+                DB::rollback();
+                return [
+                    'status' => 'error',
+                    'message' => 'Wallet pengguna tidak ditemukan.',
+                    'code' => 404
+                ];
+            }
+
+            $oldBalance = $wallet->balance;
+            $newBalance = $oldBalance + $originalTransaction->amount;
+
+            $wallet->update([
+                'balance' => $newBalance
+            ]);
+
+            $canteen->update([
+                'current_balance' => $canteen->current_balance - $originalTransaction->amount
+            ]);
+
+            $refundTransaction = Transaction::create([
+                'user_id' => $originalTransaction->user_id,
+                'rfid_card_id' => $originalTransaction->rfid_card_id,
+                'canteen_id' => $canteen->id,
+                'type' => 'refund',
+                'status' => 'berhasil',
+                'amount' => $originalTransaction->amount,
+                'note' => 'Refund untuk transaksi ID: ' . $transactionId . ' - ' . $note
+            ]);
+
+            DB::commit();
+
+            HandleEmailNotification::refund(  
+            $originalTransaction->user, 
+            $originalTransaction->amount, 
+            $newBalance, 
+            $refundTransaction->id, 
+            $transactionId, 
+            $note);
+
+            return [
+                'status' => 'success',
+                'message' => 'Refund transaksi berhasil dilakukan.',
+                'code' => 200,
+                'data' => [
+                    'refund_transaction_id' => $refundTransaction->id,
+                    'original_transaction_id' => $originalTransaction->id,
+                    'user' => $originalTransaction->user->only(['id', 'name']),
+                    'refund_amount' => $originalTransaction->amount,
+                    'canteen_id' => $canteen->id,
+                    'timestamp' => $refundTransaction->created_at,
+                    'note' => $note
+                ]
+            ];
+        } catch (\Exception $e) {
+            DB::rollback();
+
+            $userId = $originalTransaction->user_id ?? null;
+            $cardId = $originalTransaction->rfid_card_id ?? null;
+            $canteenId = $canteen->id ?? null;
+            $amount = $originalTransaction->amount ?? 0;
+
+            LogFailedTransaction::format(
+                $userId,
+                $cardId,
+                $canteenId,
+                $amount,
+                'refund',
+                'Kesalahan pada server saat melakukan refund.'
+            );
+
+            return [
+                'status' => 'error',
+                'message' => 'Refund transaksi gagal.',
+                'code' => 500,
+            ];
+        }
+    }
+
+    public function getTransactionRefundHistory(?string $range = null, int $perPage, ?int $canteenId): array
+    {
+        try {
+            $query = Transaction::where('type', 'refund')
+                ->where('status', 'berhasil')
+                ->with([
+                    'user:id,name,batch,schoolclass_id',
+                    'user.schoolClass:id,class_name',
+                    'rfidCard:id,card_uid',
+                    'canteen:id,initial_balance,current_balance,opened_at,opened_by',
+                    'canteen.opener:id,name'
+                ])
+                ->orderBy('created_at', 'desc');
+
+            if ($canteenId) {
+                $query->where('canteen_id', $canteenId);
+            }
+
+            if ($range) {
+                $now = now();
+                switch ($range) {
+                    case 'harian':
+                        $query->whereDate('created_at', $now->toDateString());
+                        break;
+                    case 'mingguan':
+                        $query->whereBetween('created_at', [$now->startOfWeek(), $now->endOfWeek()]);
+                        break;
+                    case 'bulanan':
+                        $query->whereMonth('created_at', $now->month)
+                            ->whereYear('created_at', $now->year);
+                        break;
+                    default:
+                        return [
+                            'status' => 'error',
+                            'message' => 'Parameter range tidak valid. Gunakan: harian, mingguan, atau bulanan.',
+                            'code' => 400
+                        ];
+                }
+            }
+
+            $refundHistory = $query->paginate($perPage);
+
+            if ($refundHistory->isEmpty()) {
+                return [
+                    'status' => 'error',
+                    'message' => 'Tidak ada riwayat refund.',
+                    'code' => 404
+                ];
+            }
+
+            $totalRefundAmount = $query->sum('amount');
+
+            return [
+                'status' => 'success',
+                'message' => 'Riwayat refund berhasil didapatkan.',
+                'code' => 200,
+                'data' => [
+                    'summary' => [
+                        'total_refund_amount' => $totalRefundAmount,
+                        'total_refund_transactions' => $refundHistory->total(),
+                    ],
+                    'refund_history' => $refundHistory
+                ]
+            ];
+        } catch (\Exception $e) {
+            return [
+                'status' => 'error',
+                'message' => 'Terjadi kesalahan saat mengambil riwayat refund.',
+                'code' => 500,
+            ];
+        }
     }
 }

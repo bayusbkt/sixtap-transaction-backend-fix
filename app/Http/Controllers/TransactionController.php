@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Helpers\HandleServiceResponse;
 use App\Helpers\LoginToken;
 use App\Http\Requests\TransactionProcessRequest;
+use App\Http\Requests\TransactionRefundRequest;
 use App\Http\Requests\TransactionRequest;
 use App\Http\Requests\TransactionValidateRequest;
 use App\Services\TransactionService;
@@ -14,7 +15,7 @@ use Illuminate\Http\Request;
 
 class TransactionController extends Controller
 {
-    
+
     protected $transactionService;
 
     public function __construct(TransactionService $transactionService)
@@ -27,14 +28,14 @@ class TransactionController extends Controller
         return [
             request()->query('type'),
             request()->query('range'),
-            (int) request()->query('per-page', 50),
+            (int) request()->query('per_page', 50),
         ];
     }
 
     public function topUp(TransactionRequest $request): JsonResponse
     {
         $validated = $request->validated();
-        $result = $this->transactionService->handleTopUp($validated['card_uid'], $validated['amount'], $validated['note']);
+        $result = $this->transactionService->handleTopUp($validated['card_uid'], $validated['amount']);
 
         return HandleServiceResponse::format($result);
     }
@@ -61,7 +62,7 @@ class TransactionController extends Controller
         );
 
         return HandleServiceResponse::format($result);
-    }  
+    }
 
     public function canteenTransactionHistory(): JsonResponse
     {
@@ -80,5 +81,26 @@ class TransactionController extends Controller
         $result = $this->transactionService->getPersonalTransactionHistory($type, $range, (int) $perpage, $userId);
 
         return HandleServiceResponse::format($result);
+    }
+
+    public function refundCanteenTransaction(TransactionRefundRequest $request, int $transactionId): JsonResponse
+    {
+        $validated = $request->validated();
+        $canteenOpenerId = LoginToken::getUserLoginFromToken($request);
+
+        $result = $this->transactionService->handleRefundTransaction($transactionId, $canteenOpenerId, $validated['note']);
+
+        return HandleServiceResponse::format($result);
+    }
+
+    public function refundTransactionHistory(): JsonResponse
+    {
+       [, $range, $perPage] = $this->getTransactionFilters();
+
+       $canteenId = request()->query('canteen_id') ? (int) request()->query('canteen_id') : null;
+
+       $result = $this->transactionService->getTransactionRefundHistory($range, $perPage, $canteenId);
+
+       return HandleServiceResponse::format($result);
     }
 }
