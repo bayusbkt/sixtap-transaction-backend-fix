@@ -23,18 +23,24 @@ class PinRequest extends FormRequest
      */
     public function rules(): array
     {
-        return [
-            'pin' => 'required|digits:6|integer|min:0',
+        $rules = [
+            'pin' => 'required|digits:6'
         ];
+
+        if ($this->has('old_pin')) {
+            $rules['old_pin'] = 'required|digits:6';
+        }
+
+        return $rules;
     }
 
     public function messages(): array
     {
         return [
+            'old_pin.required' => 'PIN lama wajib diisi.',
+            'old_pin.digits'   => 'PIN lama harus terdiri dari 6 digit angka.',
             'pin.required' => 'PIN wajib diisi.',
             'pin.digits'   => 'PIN harus terdiri dari 6 digit angka.',
-            'pin.integer'  => 'PIN harus berupa angka.',
-            'pin.min'      => 'PIN tidak boleh bernilai negatif.',
         ];
     }
 

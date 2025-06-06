@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Helpers\HandleServiceResponse;
 use App\Helpers\LoginToken;
+use App\Http\Requests\CanteenBalanceExchangeRequest;
+use App\Http\Requests\CanteenBalanceRejectRequest;
 use App\Http\Requests\TransactionProcessRequest;
 use App\Http\Requests\TransactionRefundRequest;
 use App\Http\Requests\TransactionRequest;
@@ -23,10 +25,11 @@ class TransactionController extends Controller
         $this->transactionService = $transactionService;
     }
 
-    private function getTransactionFilters(): array
+    private function transactionFilters(): array
     {
         return [
             request()->query('type'),
+            request()->query('status'),
             request()->query('range'),
             (int) request()->query('per_page', 50),
         ];
@@ -42,19 +45,19 @@ class TransactionController extends Controller
 
     public function topUpHistory(): JsonResponse
     {
-        [, $range, $perPage] = $this->getTransactionFilters();
+        [,, $range, $perPage] = $this->transactionFilters();
 
         $result = $this->transactionService->getTopUpHistory($range, $perPage);
 
         return HandleServiceResponse::format($result);
     }
 
-    public function processTransaction(TransactionProcessRequest $request): JsonResponse
+    public function processPurchase(TransactionProcessRequest $request): JsonResponse
     {
         $canteenOpenerId = LoginToken::getUserLoginFromToken($request);
         $validated = $request->validated();
 
-        $result = $this->transactionService->processTransaction(
+        $result = $this->transactionService->handlePurchase(
             $validated['card_uid'],
             $validated['amount'],
             $canteenOpenerId,
@@ -64,21 +67,29 @@ class TransactionController extends Controller
         return HandleServiceResponse::format($result);
     }
 
+    public function purchaseDetailById(int $transactionId): JsonResponse
+    {
+        $userId = LoginToken::getUserLoginFromToken(request());
+        $result = $this->transactionService->getPurchaseDetail($userId, $transactionId);
+
+        return HandleServiceResponse::format($result);
+    }
+
     public function canteenTransactionHistory(): JsonResponse
     {
-        [$type, $range, $perpage] = $this->getTransactionFilters();
+        [$type, $status, $range, $perpage] = $this->transactionFilters();
 
-        $result = $this->transactionService->getCanteenTransactionHistory($type, $range, (int) $perpage);
+        $result = $this->transactionService->getCanteenTransactionHistory($type, $status, $range, (int) $perpage);
 
         return HandleServiceResponse::format($result);
     }
 
     public function personalTransactionHistory(): JsonResponse
     {
-        [$type, $range, $perpage] = $this->getTransactionFilters();
+        [$type, $status, $range, $perpage] = $this->transactionFilters();
         $userId = LoginToken::getUserLoginFromToken(request());
 
-        $result = $this->transactionService->getPersonalTransactionHistory($type, $range, (int) $perpage, $userId);
+        $result = $this->transactionService->getPersonalTransactionHistory($type, $status, $range, (int) $perpage, $userId);
 
         return HandleServiceResponse::format($result);
     }
@@ -93,14 +104,63 @@ class TransactionController extends Controller
         return HandleServiceResponse::format($result);
     }
 
-    public function refundTransactionHistory(): JsonResponse
+    public function refundDetailById(int $refundTransactionId): JsonResponse
     {
-       [, $range, $perPage] = $this->getTransactionFilters();
+        $userId = LoginToken::getUserLoginFromToken(request());
 
-       $canteenId = request()->query('canteen_id') ? (int) request()->query('canteen_id') : null;
+        $result = $this->transactionService->getRefundDetail($userId, $refundTransactionId);
 
-       $result = $this->transactionService->getTransactionRefundHistory($range, $perPage, $canteenId);
+        return HandleServiceResponse::format($result);
+    }
 
-       return HandleServiceResponse::format($result);
+    public function requestCanteenBalanceExchange(CanteenBalanceExchangeRequest $request, int $canteenId): JsonResponse
+    {
+        $validated = $request->validated();
+
+        $result = $this->transactionService->requestCanteenBalanceExchange(
+            $canteenId,
+            $validated['amount']
+        );
+
+        return HandleServiceResponse::format($result);
+    }
+
+    public function acceptCanteenBalanceExchange(Request $request, int $requestId): JsonResponse
+    {
+        $adminId = LoginToken::getUserLoginFromToken($request);
+
+        $result = $this->transactionService->approveCanteenBalanceExchange($requestId, $adminId);
+
+        return HandleServiceResponse::format($result);
+    }
+
+    public function rejectCanteenBalanceExchange(CanteenBalanceRejectRequest $request, int $requestId): JsonResponse
+    {
+        $validated = $request->validated();
+        $adminId = LoginToken::getUserLoginFromToken($request);
+
+        $result = $this->transactionService->rejectCanteenBalanceExchange(
+            $requestId,
+            $adminId,
+            $validated['rejection_reason']
+        );
+
+        return HandleServiceResponse::format($result);
+    }
+
+    public function withdrawalDetailById(int $withdrawalId): JsonResponse
+    {
+        $result = $this->transactionService->getWithdrawalDetail($withdrawalId);
+
+        return HandleServiceResponse::format($result);
+    }
+
+    public function getPendingWithdrawalRequests(): JsonResponse
+    {
+        $perPage = (int) request()->query('per_page', 50);
+
+        $result = $this->transactionService->getPendingWithdrawalRequests($perPage);
+
+        return HandleServiceResponse::format($result);
     }
 }

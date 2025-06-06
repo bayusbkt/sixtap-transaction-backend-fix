@@ -9,8 +9,7 @@ use Illuminate\Support\Facades\Hash;
 
 class WalletService
 {
-    public function getBalance(int $userId): array
-    {
+    public function getBalance(int $userId): array {
         $wallet = Wallet::where('user_id', $userId)->first();
 
         if (!$wallet) {
@@ -27,7 +26,7 @@ class WalletService
             'code' => 200,
             'data' => [
                 'name' => $wallet->user->name,
-                'rfid_card_id' => $wallet->rfidCard->card_uid,
+                'card_uid' => $wallet->rfidCard->card_uid,
                 'balance' => $wallet->balance,
                 'last_top_up' => $wallet->last_top_up,
             ]
@@ -68,13 +67,12 @@ class WalletService
             return [
                 'status' => 'error',
                 'message' => 'Terjadi kesalahan saat menambahkan PIN.',
-                'error' => $e->getMessage(),
                 'code' => 500
             ];
         }
     }
 
-    public function updatePin(int $userId, string $pin): array
+    public function updatePin(int $userId, string $oldPin, string $pin): array
     {
         try {
             $user = User::find($userId);
@@ -87,10 +85,26 @@ class WalletService
                 ];
             }
 
-            if (!empty($user->pin) && Hash::check($pin, $user->pin)) {
+            if (empty($user->pin)) {
                 return [
                     'status' => 'error',
-                    'message' => 'PIN tidak boleh sama dengan PIN sebelumnya.',
+                    'message' => 'PIN lama belum diatur. Silakan atur PIN terlebih dahulu.',
+                    'code' => 400
+                ];
+            }
+
+            if (!Hash::check($oldPin, $user->pin)) {
+                return [
+                    'status' => 'error',
+                    'message' => 'PIN lama tidak sesuai.',
+                    'code' => 401
+                ];
+            }
+
+            if (Hash::check($pin, $user->pin)) {
+                return [
+                    'status' => 'error',
+                    'message' => 'PIN baru tidak boleh sama dengan PIN lama.',
                     'code' => 422
                 ];
             }
@@ -108,7 +122,6 @@ class WalletService
             return [
                 'status' => 'error',
                 'message' => 'Terjadi kesalahan saat update PIN.',
-                'error' => $e->getMessage(),
                 'code' => 500
             ];
         }

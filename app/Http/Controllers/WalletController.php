@@ -41,7 +41,7 @@ class WalletController extends Controller
         $userId = LoginToken::getUserLoginFromToken(request());
 
         $validated = $request->validated();
-        $result = $this->walletService->updatePin($userId, $validated['pin']);
+        $result = $this->walletService->updatePin($userId, $validated['old_pin'], $validated['pin']);
 
         return HandleServiceResponse::format($result);
     }

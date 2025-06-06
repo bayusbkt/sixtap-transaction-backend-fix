@@ -18,6 +18,14 @@ class CanteenController extends Controller
         $this->canteenService = $canteenService;
     }
 
+    private function canteenFilters(): array
+    {
+        return [
+            request()->query('range'),
+            (int) request()->query('per_page', 50),
+        ];
+    }
+
     public function openCanteen(Request $request): JsonResponse
     {
         $userId = LoginToken::getUserLoginFromToken($request);
@@ -53,6 +61,33 @@ class CanteenController extends Controller
         $userId = LoginToken::getUserLoginFromToken($request);
 
         $result = $this->canteenService->inputInitialFund($userId, $validated['amount']);
+
+        return HandleServiceResponse::format($result);
+    }
+
+    public function canteenIncomeHistoryPerCanteenId(int $canteenId): JsonResponse 
+    {
+        [$range, $perPage] = $this->canteenFilters();
+
+        $result = $this->canteenService->getCanteenIncomeHistory($canteenId, $range, $perPage);
+
+        return HandleServiceResponse::format($result);
+    }
+
+    public function generalCanteenIncomeHistory(): JsonResponse 
+    {
+        [$range, $perPage] = $this->canteenFilters();
+
+        $result = $this->canteenService->getGeneralCanteenIncomeHistory( $range, $perPage);
+
+        return HandleServiceResponse::format($result);
+    }
+
+    public function canteenInitialFundHistory(): JsonResponse
+    {
+        [$range, $perPage] = $this->canteenFilters();
+
+        $result = $this->canteenService->getCanteenInitialFundHistory( $range, $perPage);
 
         return HandleServiceResponse::format($result);
     }
