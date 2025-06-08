@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Support\Carbon;
 
 class Transaction extends Model
 {
@@ -23,6 +24,13 @@ class Transaction extends Model
     protected $casts = [
         'amount' => 'decimal:2',
     ];
+
+    protected function serializeDate(\DateTimeInterface $date)
+    {
+        return Carbon::instance($date)
+            ->timezone('Asia/Jakarta')
+            ->format('Y-m-d H:i:s');
+    }
 
     public function user()
     {

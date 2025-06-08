@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Helpers\HandleServiceResponse;
 use App\Helpers\LoginToken;
 use App\Http\Requests\AmountRequest;
+use App\Http\Requests\HistoryRequest;
 use App\Services\CanteenService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,12 +19,9 @@ class CanteenController extends Controller
         $this->canteenService = $canteenService;
     }
 
-    private function canteenFilters(): array
+    private function canteenFilters(): int
     {
-        return [
-            request()->query('range'),
-            (int) request()->query('per_page', 50),
-        ];
+        return (int) request()->query('per_page', 50);
     }
 
     public function openCanteen(Request $request): JsonResponse
@@ -65,29 +63,54 @@ class CanteenController extends Controller
         return HandleServiceResponse::format($result);
     }
 
-    public function canteenIncomeHistoryPerCanteenId(int $canteenId): JsonResponse 
+    public function canteenInitialFundHistory(HistoryRequest $request): JsonResponse
     {
-        [$range, $perPage] = $this->canteenFilters();
+        $perPage = $this->canteenFilters();
 
-        $result = $this->canteenService->getCanteenIncomeHistory($canteenId, $range, $perPage);
+        $validated = $request->validated();
+
+        $result = $this->canteenService->getCanteenInitialFundHistory(
+            $validated['start_date'] ?? null,
+            $validated['end_date'] ?? null,
+            $validated['specific_date'] ?? null,
+            $validated['range'] ?? null,
+            $perPage
+        );
 
         return HandleServiceResponse::format($result);
     }
 
-    public function generalCanteenIncomeHistory(): JsonResponse 
+    public function generalCanteenIncomeHistory(HistoryRequest $request): JsonResponse
     {
-        [$range, $perPage] = $this->canteenFilters();
+        $perPage = $this->canteenFilters();
 
-        $result = $this->canteenService->getGeneralCanteenIncomeHistory( $range, $perPage);
+        $validated = $request->validated();
+
+        $result = $this->canteenService->getGeneralCanteenIncomeHistory(
+            $validated['start_date'] ?? null,
+            $validated['end_date'] ?? null,
+            $validated['specific_date'] ?? null,
+            $validated['range'] ?? null,
+            $perPage
+        );
 
         return HandleServiceResponse::format($result);
     }
 
-    public function canteenInitialFundHistory(): JsonResponse
+    public function canteenIncomeHistoryPerCanteenId(HistoryRequest $request, int $canteenId): JsonResponse
     {
-        [$range, $perPage] = $this->canteenFilters();
+        $perPage = $this->canteenFilters();
 
-        $result = $this->canteenService->getCanteenInitialFundHistory( $range, $perPage);
+        $validated = $request->validated();
+
+        $result = $this->canteenService->getCanteenIncomeHistory(
+            $canteenId,
+            $validated['start_date'] ?? null,
+            $validated['end_date'] ?? null,
+            $validated['specific_date'] ?? null,
+            $validated['range'] ?? null,
+            $perPage
+        );
 
         return HandleServiceResponse::format($result);
     }

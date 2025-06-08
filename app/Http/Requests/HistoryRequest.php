@@ -6,7 +6,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Http\Exceptions\HttpResponseException;
 
-class CanteenBalanceExchangeRequest extends FormRequest
+class HistoryRequest extends FormRequest
 {
     /**
      * Determine if the user is authorized to make this request.
@@ -24,16 +24,21 @@ class CanteenBalanceExchangeRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'amount' => 'required|integer|min:500'
+            'range' => 'nullable|string|in:harian,mingguan,bulanan,tahunan',
+            'start_date' => 'nullable|date_format:Y-m-d',
+            'end_date' => 'nullable|date_format:Y-m-d|after_or_equal:start_date',
+            'specific_date' => 'nullable|date_format:Y-m-d',
         ];
     }
 
     public function messages(): array
     {
         return [
-            'amount.required' => 'Jumlah pencairan harus diisi.',
-            'amount.integer' => 'Jumlah pencairan harus berupa angka.',
-            'amount.min' => 'Jumlah pencairan minimal Rp 500.'
+            'end_date.after_or_equal' => 'Tanggal akhir harus sama atau setelah tanggal mulai.',
+            'range.in' => 'Range harus salah satu dari: harian, mingguan, bulanan, tahunan.',
+            'start_date.date_format' => 'Format tanggal mulai harus YYYY-MM-DD.',
+            'end_date.date_format' => 'Format tanggal akhir harus YYYY-MM-DD.',
+            'specific_date.date_format' => 'Format tanggal spesifik harus YYYY-MM-DD.',
         ];
     }
 

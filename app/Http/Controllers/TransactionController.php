@@ -6,6 +6,7 @@ use App\Helpers\HandleServiceResponse;
 use App\Helpers\LoginToken;
 use App\Http\Requests\CanteenBalanceExchangeRequest;
 use App\Http\Requests\CanteenBalanceRejectRequest;
+use App\Http\Requests\HistoryRequest;
 use App\Http\Requests\TransactionProcessRequest;
 use App\Http\Requests\TransactionRefundRequest;
 use App\Http\Requests\TransactionRequest;
@@ -28,10 +29,9 @@ class TransactionController extends Controller
     private function transactionFilters(): array
     {
         return [
-            request()->query('type'),
-            request()->query('status'),
-            request()->query('range'),
-            (int) request()->query('per_page', 50),
+            'type'     => request()->query('type'),
+            'status'   => request()->query('status'),
+            'per_page' => (int) request()->query('per_page', 50),
         ];
     }
 
@@ -43,11 +43,20 @@ class TransactionController extends Controller
         return HandleServiceResponse::format($result);
     }
 
-    public function topUpHistory(): JsonResponse
+    public function topUpHistory(HistoryRequest $request): JsonResponse
     {
-        [,, $range, $perPage] = $this->transactionFilters();
+        $filters = $this->transactionFilters();
+        $perPage = $filters['per_page'];
 
-        $result = $this->transactionService->getTopUpHistory($range, $perPage);
+        $validated = $request->validated();
+
+        $result = $this->transactionService->getTopUpHistory(
+            $validated['start_date'] ?? null,
+            $validated['end_date'] ?? null,
+            $validated['specific_date'] ?? null,
+            $validated['range'] ?? null,
+            $perPage
+        );
 
         return HandleServiceResponse::format($result);
     }
@@ -75,21 +84,49 @@ class TransactionController extends Controller
         return HandleServiceResponse::format($result);
     }
 
-    public function canteenTransactionHistory(): JsonResponse
+    public function canteenTransactionHistory(HistoryRequest $request): JsonResponse
     {
-        [$type, $status, $range, $perpage] = $this->transactionFilters();
+        $filters = $this->transactionFilters();
+        $type = $filters['type'];
+        $status = $filters['status'];
+        $perPage = $filters['per_page'];
 
-        $result = $this->transactionService->getCanteenTransactionHistory($type, $status, $range, (int) $perpage);
+        $validated = $request->validated();
+
+        $result = $this->transactionService->getCanteenTransactionHistory(
+            $type,
+            $status,
+            $validated['start_date'] ?? null,
+            $validated['end_date'] ?? null,
+            $validated['specific_date'] ?? null,
+            $validated['range'] ?? null,
+            $perPage
+        );
 
         return HandleServiceResponse::format($result);
     }
 
-    public function personalTransactionHistory(): JsonResponse
+    public function personalTransactionHistory(HistoryRequest $request): JsonResponse
     {
-        [$type, $status, $range, $perpage] = $this->transactionFilters();
+        $filters = $this->transactionFilters();
+        $type = $filters['type'];
+        $status = $filters['status'];
+        $perPage = $filters['per_page'];
+
         $userId = LoginToken::getUserLoginFromToken(request());
 
-        $result = $this->transactionService->getPersonalTransactionHistory($type, $status, $range, (int) $perpage, $userId);
+        $validated = $request->validated();
+
+        $result = $this->transactionService->getPersonalTransactionHistory(
+            $type,
+            $status,
+            $validated['start_date'] ?? null,
+            $validated['end_date'] ?? null,
+            $validated['specific_date'] ?? null,
+            $validated['range'] ?? null,
+            $perPage,
+            $userId
+        );
 
         return HandleServiceResponse::format($result);
     }

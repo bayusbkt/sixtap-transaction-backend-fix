@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Canteen;
 use App\Models\User;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class CanteenService
@@ -317,13 +318,63 @@ class CanteenService
         }
     }
 
-    public function getCanteenInitialFundHistory(?string $range, int $perPage): array
-    {
+    public function getCanteenInitialFundHistory(
+        ?string $startDate,
+        ?string $endDate,
+        ?string $specificDate,
+        ?string $range,
+        int $perPage
+    ): array {
         $query = Canteen::whereNotNull('opened_at')
             ->orderBy('created_at', 'desc');
 
-        if ($range) {
-            $now = now();
+        $timezone = 'Asia/Jakarta';
+
+        if ($specificDate) {
+            try {
+                $date = Carbon::parse($specificDate, $timezone);
+                $query->whereDate('created_at', $date->toDateString());
+            } catch (\Exception $e) {
+                return [
+                    'status' => 'error',
+                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
+                    'code' => 400
+                ];
+            }
+        } elseif ($startDate && $endDate) {
+            try {
+                $start = Carbon::parse($startDate, $timezone)->startOfDay();
+                $end = Carbon::parse($endDate, $timezone)->endOfDay();
+
+                if ($start->gt($end)) {
+                    return [
+                        'status' => 'error',
+                        'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir.',
+                        'code' => 400
+                    ];
+                }
+
+                $query->whereBetween('created_at', [$start, $end]);
+            } catch (\Exception $e) {
+                return [
+                    'status' => 'error',
+                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
+                    'code' => 400
+                ];
+            }
+        } elseif ($startDate) {
+            try {
+                $start = Carbon::parse($startDate, $timezone)->startOfDay();
+                $query->where('created_at', '>=', $start);
+            } catch (\Exception $e) {
+                return [
+                    'status' => 'error',
+                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
+                    'code' => 400
+                ];
+            }
+        } elseif ($range) {
+            $now = Carbon::now($timezone);
             switch ($range) {
                 case 'harian':
                     $query->whereDate('created_at', $now->toDateString());
@@ -335,6 +386,15 @@ class CanteenService
                     $query->whereMonth('created_at', $now->month)
                         ->whereYear('created_at', $now->year);
                     break;
+                case 'tahunan':
+                    $query->whereYear('created_at', $now->year);
+                    break;
+                default:
+                    return [
+                        'status' => 'error',
+                        'message' => 'Range tidak valid. Gunakan: harian, mingguan, bulanan, atau tahunan.',
+                        'code' => 400
+                    ];
             }
         }
 
@@ -382,14 +442,65 @@ class CanteenService
         ];
     }
 
-    public function getCanteenIncomeHistory(int $canteenId, ?string $range, int $perPage): array
-    {
+    public function getCanteenIncomeHistory(
+        int $canteenId,
+        ?string $startDate,
+        ?string $endDate,
+        ?string $specificDate,
+        ?string $range,
+        int $perPage
+    ): array {
         $query = Canteen::where('id', $canteenId)
             ->whereNotNull('opened_at')
             ->orderBy('created_at', 'desc');
 
-        if ($range) {
-            $now = now();
+        $timezone = 'Asia/Jakarta';
+
+        if ($specificDate) {
+            try {
+                $date = Carbon::parse($specificDate, $timezone);
+                $query->whereDate('created_at', $date->toDateString());
+            } catch (\Exception $e) {
+                return [
+                    'status' => 'error',
+                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
+                    'code' => 400
+                ];
+            }
+        } elseif ($startDate && $endDate) {
+            try {
+                $start = Carbon::parse($startDate, $timezone)->startOfDay();
+                $end = Carbon::parse($endDate, $timezone)->endOfDay();
+
+                if ($start->gt($end)) {
+                    return [
+                        'status' => 'error',
+                        'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir.',
+                        'code' => 400
+                    ];
+                }
+
+                $query->whereBetween('created_at', [$start, $end]);
+            } catch (\Exception $e) {
+                return [
+                    'status' => 'error',
+                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
+                    'code' => 400
+                ];
+            }
+        } elseif ($startDate) {
+            try {
+                $start = Carbon::parse($startDate, $timezone)->startOfDay();
+                $query->where('created_at', '>=', $start);
+            } catch (\Exception $e) {
+                return [
+                    'status' => 'error',
+                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
+                    'code' => 400
+                ];
+            }
+        } elseif ($range) {
+            $now = Carbon::now($timezone);
             switch ($range) {
                 case 'harian':
                     $query->whereDate('created_at', $now->toDateString());
@@ -401,6 +512,15 @@ class CanteenService
                     $query->whereMonth('created_at', $now->month)
                         ->whereYear('created_at', $now->year);
                     break;
+                case 'tahunan':
+                    $query->whereYear('created_at', $now->year);
+                    break;
+                default:
+                    return [
+                        'status' => 'error',
+                        'message' => 'Range tidak valid. Gunakan: harian, mingguan, bulanan, atau tahunan.',
+                        'code' => 400
+                    ];
             }
         }
 
@@ -457,27 +577,83 @@ class CanteenService
         return $response;
     }
 
-    public function getGeneralCanteenIncomeHistory(?string $range, int $perPage): array
-    {
+    public function getGeneralCanteenIncomeHistory(
+        ?string $startDate,
+        ?string $endDate,
+        ?string $specificDate,
+        ?string $range,
+        int $perPage
+    ): array {
         $query = Canteen::whereNotNull('opened_at')
             ->orderBy('created_at', 'desc');
 
-        if ($range) {
-            $now = now();
+        $timezone = 'Asia/Jakarta';
 
+        if ($specificDate) {
+            try {
+                $date = Carbon::parse($specificDate, $timezone);
+                $query->whereDate('created_at', $date->toDateString());
+            } catch (\Exception $e) {
+                return [
+                    'status' => 'error',
+                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
+                    'code' => 400
+                ];
+            }
+        } elseif ($startDate && $endDate) {
+            try {
+                $start = Carbon::parse($startDate, $timezone)->startOfDay();
+                $end = Carbon::parse($endDate, $timezone)->endOfDay();
+
+                if ($start->gt($end)) {
+                    return [
+                        'status' => 'error',
+                        'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir.',
+                        'code' => 400
+                    ];
+                }
+
+                $query->whereBetween('created_at', [$start, $end]);
+            } catch (\Exception $e) {
+                return [
+                    'status' => 'error',
+                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
+                    'code' => 400
+                ];
+            }
+        } elseif ($startDate) {
+            try {
+                $start = Carbon::parse($startDate, $timezone)->startOfDay();
+                $query->where('created_at', '>=', $start);
+            } catch (\Exception $e) {
+                return [
+                    'status' => 'error',
+                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
+                    'code' => 400
+                ];
+            }
+        } elseif ($range) {
+            $now = Carbon::now($timezone);
             switch ($range) {
                 case 'harian':
                     $query->whereDate('created_at', $now->toDateString());
                     break;
-
                 case 'mingguan':
                     $query->whereBetween('created_at', [$now->startOfWeek(), $now->endOfWeek()]);
                     break;
-
                 case 'bulanan':
                     $query->whereMonth('created_at', $now->month)
                         ->whereYear('created_at', $now->year);
                     break;
+                case 'tahunan':
+                    $query->whereYear('created_at', $now->year);
+                    break;
+                default:
+                    return [
+                        'status' => 'error',
+                        'message' => 'Range tidak valid. Gunakan: harian, mingguan, bulanan, atau tahunan.',
+                        'code' => 400
+                    ];
             }
         }
 

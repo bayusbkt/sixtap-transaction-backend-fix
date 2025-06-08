@@ -3,6 +3,8 @@
 namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Contracts\Validation\Validator;
+use Illuminate\Http\Exceptions\HttpResponseException;
 
 class CanteenBalanceRejectRequest extends FormRequest
 {
@@ -33,5 +35,14 @@ class CanteenBalanceRejectRequest extends FormRequest
             'rejection_reason.string' => 'Alasan penolakan harus berupa teks.',
             'rejection_reason.max' => 'Alasan penolakan maksimal 255 karakter.'
         ];
+    }
+
+    protected function failedValidation(Validator $validator)
+    {
+        throw new HttpResponseException(response()->json([
+            'status' => 'error',
+            'message' => 'Validasi gagal.',
+            'errors' => $validator->errors()
+        ], 422));
     }
 }
