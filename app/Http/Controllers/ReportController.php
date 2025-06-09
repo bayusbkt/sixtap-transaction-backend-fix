@@ -3,9 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Helpers\HandleServiceResponse;
+use App\Http\Requests\DateRequest;
 use App\Services\ReportService;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 
 class ReportController extends Controller
 {
@@ -16,22 +16,16 @@ class ReportController extends Controller
         $this->reportService = $reportService;
     }
 
-    public function transactionReport(): JsonResponse
+    public function transactionReport(DateRequest $request): JsonResponse
     {
-        $range = request()->query('range') ?? null;
-        $canteenId = request()->query('canteen_id') ?? null;
+        $validated = $request->validated();
 
-        $result = $this->reportService->generateTransactionReport($range, $canteenId);
-
-        return HandleServiceResponse::format($result);
-    }
-
-    public function financialReport(): JsonResponse
-    {
-        $range = request()->query('range') ?? null;
-        $canteenId = request()->query('canteen_id') ?? null;
-
-        $result = $this->reportService->generateFinancialSummary($range, $canteenId);
+        $result = $this->reportService->generateTransactionReport(
+            $validated['start_date'] ?? null,
+            $validated['end_date'] ?? null,
+            $validated['specific_date'] ?? null,
+            $validated['range'] ?? null,
+        );
 
         return HandleServiceResponse::format($result);
     }

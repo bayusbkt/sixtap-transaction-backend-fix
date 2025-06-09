@@ -6,13 +6,11 @@ use App\Helpers\HandleServiceResponse;
 use App\Helpers\LoginToken;
 use App\Http\Requests\CanteenBalanceExchangeRequest;
 use App\Http\Requests\CanteenBalanceRejectRequest;
-use App\Http\Requests\HistoryRequest;
+use App\Http\Requests\DateRequest;
 use App\Http\Requests\TransactionProcessRequest;
 use App\Http\Requests\TransactionRefundRequest;
 use App\Http\Requests\TransactionRequest;
-use App\Http\Requests\TransactionValidateRequest;
 use App\Services\TransactionService;
-use App\Services\WalletService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -43,7 +41,7 @@ class TransactionController extends Controller
         return HandleServiceResponse::format($result);
     }
 
-    public function topUpHistory(HistoryRequest $request): JsonResponse
+    public function topUpHistory(DateRequest $request): JsonResponse
     {
         $filters = $this->transactionFilters();
         $perPage = $filters['per_page'];
@@ -84,7 +82,7 @@ class TransactionController extends Controller
         return HandleServiceResponse::format($result);
     }
 
-    public function canteenTransactionHistory(HistoryRequest $request): JsonResponse
+    public function canteenTransactionHistory(DateRequest $request): JsonResponse
     {
         $filters = $this->transactionFilters();
         $type = $filters['type'];
@@ -106,7 +104,7 @@ class TransactionController extends Controller
         return HandleServiceResponse::format($result);
     }
 
-    public function personalTransactionHistory(HistoryRequest $request): JsonResponse
+    public function personalTransactionHistory(DateRequest $request): JsonResponse
     {
         $filters = $this->transactionFilters();
         $type = $filters['type'];

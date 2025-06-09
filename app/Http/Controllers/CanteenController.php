@@ -5,7 +5,7 @@ namespace App\Http\Controllers;
 use App\Helpers\HandleServiceResponse;
 use App\Helpers\LoginToken;
 use App\Http\Requests\AmountRequest;
-use App\Http\Requests\HistoryRequest;
+use App\Http\Requests\DateRequest;
 use App\Services\CanteenService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -63,7 +63,7 @@ class CanteenController extends Controller
         return HandleServiceResponse::format($result);
     }
 
-    public function canteenInitialFundHistory(HistoryRequest $request): JsonResponse
+    public function canteenInitialFundHistory(DateRequest $request): JsonResponse
     {
         $perPage = $this->canteenFilters();
 
@@ -80,7 +80,7 @@ class CanteenController extends Controller
         return HandleServiceResponse::format($result);
     }
 
-    public function generalCanteenIncomeHistory(HistoryRequest $request): JsonResponse
+    public function generalCanteenIncomeHistory(DateRequest $request): JsonResponse
     {
         $perPage = $this->canteenFilters();
 
@@ -97,7 +97,7 @@ class CanteenController extends Controller
         return HandleServiceResponse::format($result);
     }
 
-    public function canteenIncomeHistoryPerCanteenId(HistoryRequest $request, int $canteenId): JsonResponse
+    public function canteenIncomeHistoryPerCanteenId(DateRequest $request, int $canteenId): JsonResponse
     {
         $perPage = $this->canteenFilters();
 

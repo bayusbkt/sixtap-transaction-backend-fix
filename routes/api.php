@@ -52,8 +52,7 @@ Route::middleware(['jwt.verify', 'role:penjaga kantin'])->group(function () {
 
 //API Admin dan Petinggi Sekolah
 Route::middleware(['jwt.verify', 'role:admin,petinggi sekolah'])->group(function () {
-    Route::get('/report/transaction', [ReportController::class, 'transactionReport']);
-    Route::get('/report/financial', [ReportController::class, 'financialReport']);
+    Route::post('/report/transaction', [ReportController::class, 'transactionReport']);
 });
 
 //API Admin dan Penjaga Kantin

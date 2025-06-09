@@ -16,14 +16,14 @@ class HandleServiceResponse
         if ($response['status'] === 'error') {
             if (!empty($result['error'])) {
                 $response['error'] = $result['error'];
+                $statusCode = $result['code'] ?? 500;
             }
         } else {
             if (!empty($result['data'])) {
                 $response['data'] = $result['data'];
+                $statusCode = $result['code'] ?? 200;
             }
         }
-
-        $statusCode = $result['code'];
 
         return response()->json($response, $statusCode);
     }
