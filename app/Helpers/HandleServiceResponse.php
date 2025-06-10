@@ -13,17 +13,20 @@ class HandleServiceResponse
             'message' => $result['message'],
         ];
 
+
         if ($response['status'] === 'error') {
             if (!empty($result['error'])) {
                 $response['error'] = $result['error'];
-                $statusCode = $result['code'] ?? 500;
             }
         } else {
             if (!empty($result['data'])) {
                 $response['data'] = $result['data'];
-                $statusCode = $result['code'] ?? 200;
             }
         }
+
+        $statusCode = $response['status'] === 'error'
+            ? ($result['code'] ?? 500)
+            : ($result['code'] ?? 200);
 
         return response()->json($response, $statusCode);
     }

@@ -192,9 +192,30 @@ class TransactionController extends Controller
 
     public function getPendingWithdrawalRequests(): JsonResponse
     {
-        $perPage = (int) request()->query('per_page', 50);
+        $filters = $this->transactionFilters();
+        $perPage = $filters['per_page'];
 
         $result = $this->transactionService->getPendingWithdrawalRequests($perPage);
+
+        return HandleServiceResponse::format($result);
+    }
+
+    public function withdrawalHistory(DateRequest $request): JsonResponse
+    {
+        $filters = $this->transactionFilters();
+        $status = $filters['status'];
+        $perPage = $filters['per_page'];
+
+        $validated = $request->validated();
+
+        $result = $this->transactionService->getWithdrawalHistory(
+            $status,
+            $validated['start_date'] ?? null,
+            $validated['end_date'] ?? null,
+            $validated['specific_date'] ?? null,
+            $validated['range'] ?? null,
+            $perPage
+        );
 
         return HandleServiceResponse::format($result);
     }

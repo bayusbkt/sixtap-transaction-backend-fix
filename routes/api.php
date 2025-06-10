@@ -12,6 +12,7 @@ Route::middleware(['jwt.verify', 'role:admin'])->group(function () {
     Route::post('/transaction/top-up/history', [TransactionController::class, 'topUpHistory']);
 
     Route::get('/transaction/balance-exchange/pending', [TransactionController::class, 'getPendingWithdrawalRequests']);
+    Route::post('/transaction/balance-exchange/history', [TransactionController::class,'withdrawalHistory']);
     Route::post('/transaction/balance-exchange/{requestId}/accept', [TransactionController::class, 'acceptCanteenBalanceExchange']);
     Route::post('/transaction/balance-exchange/{requestId}/reject', [TransactionController::class, 'rejectCanteenBalanceExchange']);
 });

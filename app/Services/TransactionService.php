@@ -1536,4 +1536,131 @@ class TransactionService
             ];
         }
     }
+
+    public function getWithdrawalHistory(
+    ?string $status,
+    ?string $startDate,
+    ?string $endDate,
+    ?string $specificDate,
+    ?string $range,
+    int $perPage
+): array {
+    $validStatus = ['berhasil', 'menunggu', 'gagal'];
+
+    try {
+        $query = Transaction::where('type', 'pencairan')
+            ->with([
+                'user:id,name,batch,schoolclass_id',
+                'user.schoolClass:id,class_name',
+                'canteen:id,initial_balance,current_balance,opened_at,closed_at,opened_by',
+                'canteen.opener:id,name',
+            ])
+            ->orderBy('created_at', 'desc');
+
+        if ($status && in_array($status, $validStatus)) {
+            $query->where('status', $status);
+        } elseif ($status) {
+            return [
+                'status' => 'error',
+                'message' => 'Status tidak valid. Hanya berhasil, menunggu, dan gagal yang diizinkan.',
+                'code' => 400
+            ];
+        }
+
+        $timezone = 'Asia/Jakarta';
+
+        if ($specificDate) {
+            try {
+                $date = Carbon::parse($specificDate, $timezone);
+                $query->whereDate('created_at', $date->toDateString());
+            } catch (\Exception $e) {
+                return [
+                    'status' => 'error',
+                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
+                    'code' => 400
+                ];
+            }
+        } elseif ($startDate && $endDate) {
+            try {
+                $start = Carbon::parse($startDate, $timezone)->startOfDay();
+                $end = Carbon::parse($endDate, $timezone)->endOfDay();
+
+                if ($start->gt($end)) {
+                    return [
+                        'status' => 'error',
+                        'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir.',
+                        'code' => 400
+                    ];
+                }
+
+                $query->whereBetween('created_at', [$start, $end]);
+            } catch (\Exception $e) {
+                return [
+                    'status' => 'error',
+                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
+                    'code' => 400
+                ];
+            }
+        } elseif ($startDate) {
+            try {
+                $start = Carbon::parse($startDate, $timezone)->startOfDay();
+                $query->where('created_at', '>=', $start);
+            } catch (\Exception $e) {
+                return [
+                    'status' => 'error',
+                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
+                    'code' => 400
+                ];
+            }
+        } elseif ($range) {
+            $now = Carbon::now($timezone);
+            switch ($range) {
+                case 'harian':
+                    $query->whereDate('created_at', $now->toDateString());
+                    break;
+                case 'mingguan':
+                    $query->whereBetween('created_at', [$now->startOfWeek(), $now->endOfWeek()]);
+                    break;
+                case 'bulanan':
+                    $query->whereMonth('created_at', $now->month)
+                        ->whereYear('created_at', $now->year);
+                    break;
+                case 'tahunan':
+                    $query->whereYear('created_at', $now->year);
+                    break;
+                default:
+                    return [
+                        'status' => 'error',
+                        'message' => 'Range tidak valid. Gunakan: harian, mingguan, bulanan, atau tahunan.',
+                        'code' => 400
+                    ];
+            }
+        }
+
+        $withdrawalHistory = $query->paginate($perPage);
+
+        if ($withdrawalHistory->isEmpty()) {
+            return [
+                'status' => 'error',
+                'message' => 'Tidak ada riwayat pencairan saldo kantin.',
+                'code' => 404
+            ];
+        }
+
+        return [
+            'status' => 'success',
+            'message' => 'Riwayat pencairan saldo kantin berhasil didapatkan.',
+            'code' => 200,
+            'data' => $withdrawalHistory
+        ];
+
+    } catch (\Exception $e) {
+        return [
+            'status' => 'error',
+            'message' => 'Gagal mengambil riwayat pencairan saldo kantin.',
+            'code' => 500,
+        ];
+    }
+}
+    
 }
