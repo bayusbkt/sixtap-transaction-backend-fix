@@ -282,7 +282,7 @@ class CanteenService
                 ];
             }
 
-            if (!empty($canteen->initial_balance)) {
+            if ($canteen->initial_balance > 0) {
                 return [
                     'status' => 'error',
                     'message' => 'Modal awal sudah ditambahkan sebelumnya',

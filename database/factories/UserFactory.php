@@ -4,7 +4,6 @@ namespace Database\Factories;
 
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
 
 /**
  * @extends \Illuminate\Database\Eloquent\Factories\Factory<\App\Models\User>
@@ -12,33 +11,26 @@ use Illuminate\Support\Str;
 class UserFactory extends Factory
 {
     /**
-     * The current password being used by the factory.
-     */
-    protected static ?string $password;
-
-    /**
      * Define the model's default state.
      *
      * @return array<string, mixed>
      */
     public function definition(): array
     {
-        return [
-            'name' => fake()->name(),
-            'email' => fake()->unique()->safeEmail(),
-            'email_verified_at' => now(),
-            'password' => static::$password ??= Hash::make('password'),
-            'remember_token' => Str::random(10),
-        ];
-    }
+        $role = $this->faker->randomElement([2, 3, 4, 5]);
 
-    /**
-     * Indicate that the model's email address should be unverified.
-     */
-    public function unverified(): static
-    {
-        return $this->state(fn (array $attributes) => [
-            'email_verified_at' => null,
-        ]);
+        return [
+            'name' => $this->faker->name(),
+            'email' => $this->faker->unique()->safeEmail(),
+            'password' => Hash::make('password'),
+            'phone' => $this->faker->phoneNumber(),
+            'pin' => str_pad(rand(0, 999999), 6, '0', STR_PAD_LEFT),
+            'nis' => $role == 2 ? $this->faker->numerify('##########') : null,
+            'nip' => in_array($role, [3, 4, 5]) ? $this->faker->numerify('############') : null,
+            'batch' => rand(2015, 2025),
+            'photo' => null,
+            'role_id' => $role,
+            'schoolclass_id' => $role == 2 ? rand(1, 9) : null,
+        ];
     }
 }
