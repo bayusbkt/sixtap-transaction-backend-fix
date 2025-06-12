@@ -22,23 +22,14 @@ class TransactionService
         try {
             DB::beginTransaction();
 
-            $card = RfidCard::where('card_uid', $cardUid)->first();
+            $card = RfidCard::where('card_uid', $cardUid) ->where('is_active', true)->first();
 
             if (!$card) {
                 DB::rollback();
                 return [
                     'status' => 'error',
-                    'message' => 'Kartu tidak ditemukan.',
+                    'message' => 'Kartu tidak ditemukan atau tidak aktif.',
                     'code' => 404
-                ];
-            }
-
-            if (!$card->is_active) {
-                DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Kartu tidak aktif.',
-                    'code' => 422
                 ];
             }
 
