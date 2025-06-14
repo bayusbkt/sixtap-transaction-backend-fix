@@ -30,4 +30,23 @@ class HandleServiceResponse
 
         return response()->json($response, $statusCode);
     }
+
+    public static function successResponse(string $message, array $data = [], int $code = 200): array
+    {
+        return [
+            'status' => 'success',
+            'message' => $message,
+            'code' => $code,
+            'data' => $data
+        ];
+    }
+   
+    public static function errorResponse(string $message, int $code = 400): array
+    {
+        return [
+            'status' => 'error',
+            'message' => $message,
+            'code' => $code,
+        ];
+    }
 }

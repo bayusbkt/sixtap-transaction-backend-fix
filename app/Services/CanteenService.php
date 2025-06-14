@@ -2,50 +2,41 @@
 
 namespace App\Services;
 
-use App\Models\Canteen;
-use App\Models\User;
-use Illuminate\Support\Carbon;
+use App\Helpers\HandleServiceResponse;
+use App\Repositories\CanteenRepository;
 use Illuminate\Support\Facades\DB;
 
 class CanteenService
 {
+    protected $canteenRepository;
+
+    public function __construct(CanteenRepository $canteenRepository)
+    {
+        $this->canteenRepository = $canteenRepository;
+    }
+
     public function requestOpenCanteen(int $userId): array
     {
-        $user = User::find($userId);
+        $user = $this->canteenRepository->findUser($userId);
 
         if (!$user) {
-            return [
-                'status' => 'error',
-                'message' => 'Pengguna tidak ditemukan.',
-                'code' => 404,
-            ];
+            return HandleServiceResponse::errorResponse('Pengguna tidak ditemukan.', 404);
         }
 
-        if (strtolower($user->role->role_name) !== 'penjaga kantin') {
-            return [
-                'status' => 'error',
-                'message' => 'Anda bukan penjaga kantin.',
-                'code' => 403,
-            ];
+        if (!$this->isCanteenGuard($user)) {
+            return HandleServiceResponse::errorResponse('Anda bukan penjaga kantin.', 403);
         }
 
-        $alreadyOpened = Canteen::whereDate('opened_at', now()->toDateString())
-            ->where('opened_by', $userId)
-            ->whereNull('closed_at')
-            ->exists();
+        $alreadyOpened = $this->canteenRepository->findOpenCanteenForToday($userId);
 
         if ($alreadyOpened) {
-            return [
-                'status' => 'error',
-                'message' => 'Kantin sudah dibuka hari ini.',
-                'code' => 409,
-            ];
+            return HandleServiceResponse::errorResponse('Kantin sudah dibuka hari ini.', 409);
         }
 
         try {
             DB::beginTransaction();
 
-            $canteen = Canteen::create([
+            $canteen = $this->canteenRepository->createCanteen([
                 'initial_balance' => 0,
                 'current_balance' => 0,
                 'is_settled' => false,
@@ -57,77 +48,47 @@ class CanteenService
 
             DB::commit();
 
-            return [
-                'status' => 'success',
-                'message' => 'Kantin berhasil dibuka.',
-                'code' => 200,
-                'data' => [
-                    'canteen_id' => $canteen->id,
-                    'opened_at' => $canteen->opened_at,
-                    'opened_by' => $user->name,
-                ]
-            ];
+            return HandleServiceResponse::successResponse('Kantin berhasil dibuka.', [
+                'canteen_id' => $canteen->id,
+                'opened_at' => $canteen->opened_at,
+                'opened_by' => $user->name,
+            ]);
         } catch (\Exception $e) {
             DB::rollBack();
-
-            return [
-                'status' => 'error',
-                'message' => 'Terjadi kesalahan saat membuka kantin.',
-                'code' => 500
-            ];
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat membuka kantin.', 500);
         }
     }
 
     public function settleCanteen(int $userId, ?string $note): array
     {
-        $user = User::find($userId);
+        $user = $this->canteenRepository->findUser($userId);
 
         if (!$user) {
-            return [
-                'status' => 'error',
-                'message' => 'Pengguna tidak ditemukan.',
-                'code' => 404,
-            ];
+            return HandleServiceResponse::errorResponse('Pengguna tidak ditemukan.', 404);
         }
 
-        if (strtolower($user->role->role_name) !== 'penjaga kantin') {
-            return [
-                'status' => 'error',
-                'message' => 'Anda bukan penjaga kantin.',
-                'code' => 403,
-            ];
+        if (!$this->isCanteenGuard($user)) {
+            return HandleServiceResponse::errorResponse('Anda bukan penjaga kantin.', 403);
         }
 
         try {
             DB::beginTransaction();
 
-            $canteen = Canteen::where('opened_by', $userId)
-                ->whereNull('closed_at')
-                ->whereDate('opened_at', now()->toDateString())
-                ->latest()
-                ->first();
+            $canteen = $this->canteenRepository->findActiveCanteenSession($userId);
 
             if (!$canteen) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Tidak ada sesi kantin yang sedang berjalan.',
-                    'code' => 404,
-                ];
+                return HandleServiceResponse::errorResponse('Tidak ada sesi kantin yang sedang berjalan.', 404);
             }
 
             if (!empty($canteen->settlement_time) || $canteen->is_settled) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Kantin sudah di-settle oleh penjaga kantin.',
-                    'code' => 422,
-                ];
+                return HandleServiceResponse::errorResponse('Kantin sudah di-settle oleh penjaga kantin.', 422);
             }
 
             $netProfit = $canteen->current_balance - $canteen->initial_balance;
 
-            $canteen->update([
+            $this->canteenRepository->updateCanteen($canteen, [
                 'is_settled' => true,
                 'settlement_time' => now(),
                 'note' => $note ?? null
@@ -135,186 +96,113 @@ class CanteenService
 
             DB::commit();
 
-            return [
-                'status' => 'success',
-                'message' => 'Kantin berhasil diselesaikan.',
-                'code' => 200,
-                'data' => [
-                    'canteen_id' => $canteen->id,
-                    'initial_balance' => $canteen->initial_balance,
-                    'current_balance' => $canteen->current_balance,
-                    'net_profit' => $netProfit,
-                    'is_settled' => $canteen->is_settled,
-                    'settlement_time' => $canteen->settlement_time,
-                    'opened_at' => $canteen->opened_at,
-                    'opened_by' => $user->name,
-                    'closed_at' => $canteen->closed_at,
-                    'note' => $canteen->note,
-                ]
-            ];
+            return HandleServiceResponse::successResponse('Kantin berhasil diselesaikan.', [
+                'canteen_id' => $canteen->id,
+                'initial_balance' => $canteen->initial_balance,
+                'current_balance' => $canteen->current_balance,
+                'net_profit' => $netProfit,
+                'is_settled' => $canteen->is_settled,
+                'settlement_time' => $canteen->settlement_time,
+                'opened_at' => $canteen->opened_at,
+                'opened_by' => $user->name,
+                'closed_at' => $canteen->closed_at,
+                'note' => $canteen->note,
+            ]);
         } catch (\Exception $e) {
             DB::rollBack();
-
-            return [
-                'status' => 'error',
-                'message' => 'Terjadi kesalahan saat menutup kantin.',
-                'code' => 500
-            ];
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat menutup kantin.', 500);
         }
     }
 
     public function closeCanteen(int $userId): array
     {
-        $user = User::find($userId);
+        $user = $this->canteenRepository->findUser($userId);
 
         if (!$user) {
-            return [
-                'status' => 'error',
-                'message' => 'Pengguna tidak ditemukan.',
-                'code' => 404,
-            ];
+            return HandleServiceResponse::errorResponse('Pengguna tidak ditemukan.', 404);
         }
 
-        if (strtolower($user->role->role_name) !== 'penjaga kantin') {
-            return [
-                'status' => 'error',
-                'message' => 'Anda bukan penjaga kantin.',
-                'code' => 403,
-            ];
+        if (!$this->isCanteenGuard($user)) {
+            return HandleServiceResponse::errorResponse('Anda bukan penjaga kantin.', 403);
         }
 
         try {
             DB::beginTransaction();
 
-            $canteen = Canteen::where('opened_by', $userId)
-                ->whereNull('closed_at')
-                ->whereDate('opened_at', now()->toDateString())
-                ->latest()
-                ->first();
+            $canteen = $this->canteenRepository->findActiveCanteenSession($userId);
 
             if (!$canteen) {
                 DB::rollBack();
-                return [
-                    'status' => 'error',
-                    'message' => 'Tidak ada sesi kantin yang sedang berjalan.',
-                    'code' => 404,
-                ];
+                return HandleServiceResponse::errorResponse('Tidak ada sesi kantin yang sedang berjalan.', 404);
             }
 
             if (!empty($canteen->closed_at)) {
                 DB::rollBack();
-                return [
-                    'status' => 'error',
-                    'message' => 'Kantin sudah ditutup sebelumnya',
-                    'code' => 404,
-                ];
+                return HandleServiceResponse::errorResponse('Kantin sudah ditutup sebelumnya', 404);
             }
 
-            $canteen->update([
+            $this->canteenRepository->updateCanteen($canteen, [
                 'closed_at' => now()
             ]);
 
             DB::commit();
 
-            return [
-                'status' => 'success',
-                'message' => 'Kantin berhasil ditutup.',
-                'code' => 200,
-                'data' => [
-                    'canteen_id' => $canteen->id,
-                    'closed_at' => $canteen->closed_at,
-                    'opened_at' => $canteen->opened_at,
-                    'opened_by' => $user->name,
-                ]
-            ];
+            return HandleServiceResponse::successResponse('Kantin berhasil ditutup.', [
+                'canteen_id' => $canteen->id,
+                'closed_at' => $canteen->closed_at,
+                'opened_at' => $canteen->opened_at,
+                'opened_by' => $user->name,
+            ]);
         } catch (\Exception $e) {
             DB::rollBack();
-            return [
-                'status' => 'error',
-                'message' => 'Terjadi kesalahan saat menutup kantin.',
-                'code' => 500,
-            ];
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat menutup kantin.', 500);
         }
     }
 
     public function inputInitialFund(int $userId, int $amount): array
     {
-        $user = User::find($userId);
+        $user = $this->canteenRepository->findUser($userId);
 
         if (!$user) {
-            return [
-                'status' => 'error',
-                'message' => 'Pengguna tidak ditemukan.',
-                'code' => 404,
-            ];
+            return HandleServiceResponse::errorResponse('Pengguna tidak ditemukan.', 404);
         }
 
-        if (strtolower($user->role->role_name) !== 'penjaga kantin') {
-            return [
-                'status' => 'error',
-                'message' => 'Anda bukan penjaga kantin.',
-                'code' => 403,
-            ];
+        if (!$this->isCanteenGuard($user)) {
+            return HandleServiceResponse::errorResponse('Anda bukan penjaga kantin.', 403);
+        }
+
+        if ($amount < 0) {
+            return HandleServiceResponse::errorResponse('Jumlah saldo tidak boleh negatif.', 422);
         }
 
         try {
             DB::beginTransaction();
 
-            $canteen = Canteen::where('opened_by', $userId)
-                ->whereNull('closed_at')
-                ->whereDate('opened_at', now()->toDateString())
-                ->latest()
-                ->first();
+            $canteen = $this->canteenRepository->findActiveCanteenSession($userId);
 
             if (!$canteen) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Belum ada sesi kantin yang dibuka.',
-                    'code' => 404,
-                ];
-            }
-
-            if ($amount < 0) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Jumlah saldo tidak boleh negatif.',
-                    'code' => 422,
-                ];
+                return HandleServiceResponse::errorResponse('Belum ada sesi kantin yang dibuka.', 404);
             }
 
             if ($canteen->initial_balance > 0) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Modal awal sudah ditambahkan sebelumnya',
-                    'code' => 422
-                ];
+                return HandleServiceResponse::errorResponse('Modal awal sudah ditambahkan sebelumnya', 422);
             }
 
-            $canteen->update([
+            $this->canteenRepository->updateCanteen($canteen, [
                 'initial_balance' => $amount
             ]);
 
             DB::commit();
 
-            return [
-                'status' => 'success',
-                'message' => 'Saldo awal kantin berhasil disimpan.',
-                'code' => 200,
-                'data' => [
-                    'canteen_id' => $canteen->id,
-                    'initial_balance' => (int) $canteen->initial_balance,
-                    'opened_at' => $canteen->opened_at,
-                    'opened_by' => $user->name
-                ]
-            ];
+            return HandleServiceResponse::successResponse('Saldo awal kantin berhasil disimpan.', [
+                'canteen_id' => $canteen->id,
+                'initial_balance' => (int) $canteen->initial_balance,
+                'opened_at' => $canteen->opened_at,
+                'opened_by' => $user->name
+            ]);
         } catch (\Exception $e) {
             DB::rollBack();
-
-            return [
-                'status' => 'error',
-                'message' => 'Terjadi kesalahan saat menyimpan saldo awal kantin.',
-                'code' => 500,
-            ];
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat menyimpan saldo awal kantin.', 500);
         }
     }
 
@@ -325,85 +213,21 @@ class CanteenService
         ?string $range,
         int $perPage
     ): array {
-        $query = Canteen::whereNotNull('opened_at')
-            ->orderBy('created_at', 'desc');
-
-        $timezone = 'Asia/Jakarta';
-
-        if ($specificDate) {
-            try {
-                $date = Carbon::parse($specificDate, $timezone);
-                $query->whereDate('created_at', $date->toDateString());
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($startDate && $endDate) {
-            try {
-                $start = Carbon::parse($startDate, $timezone)->startOfDay();
-                $end = Carbon::parse($endDate, $timezone)->endOfDay();
-
-                if ($start->gt($end)) {
-                    return [
-                        'status' => 'error',
-                        'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir.',
-                        'code' => 400
-                    ];
-                }
-
-                $query->whereBetween('created_at', [$start, $end]);
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($startDate) {
-            try {
-                $start = Carbon::parse($startDate, $timezone)->startOfDay();
-                $query->where('created_at', '>=', $start);
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($range) {
-            $now = Carbon::now($timezone);
-            switch ($range) {
-                case 'harian':
-                    $query->whereDate('created_at', $now->toDateString());
-                    break;
-                case 'mingguan':
-                    $query->whereBetween('created_at', [$now->startOfWeek(), $now->endOfWeek()]);
-                    break;
-                case 'bulanan':
-                    $query->whereMonth('created_at', $now->month)
-                        ->whereYear('created_at', $now->year);
-                    break;
-                case 'tahunan':
-                    $query->whereYear('created_at', $now->year);
-                    break;
-                default:
-                    return [
-                        'status' => 'error',
-                        'message' => 'Range tidak valid. Gunakan: harian, mingguan, bulanan, atau tahunan.',
-                        'code' => 400
-                    ];
-            }
+        $validationResult = $this->validateDateParameters($startDate, $endDate, $specificDate, $range);
+        if ($validationResult) {
+            return $validationResult;
         }
 
-        $paginatedCanteens = $query->with(['opener:id,name'])
-            ->orderBy('opened_at', 'desc')
-            ->paginate($perPage);
+        $paginatedCanteens = $this->canteenRepository->getCanteenHistoryByDateRange(
+            null,
+            $startDate,
+            $endDate,
+            $specificDate,
+            $range,
+            $perPage
+        );
 
         $canteens = $paginatedCanteens->items();
-
         $historyData = [];
         $totalInitialFund = 0;
 
@@ -428,18 +252,13 @@ class CanteenService
             ];
         }
 
-        return [
-            'status' => 'success',
-            'message' => 'Riwayat modal awal kantin berhasil diambil.',
-            'code' => 200,
-            'data' => [
-                'history' => $historyData,
-                'summary' => [
-                    'total_sessions' => count($historyData),
-                    'total_initial_fund' => (int) $totalInitialFund,
-                ],
-            ]
-        ];
+        return HandleServiceResponse::successResponse('Riwayat modal awal kantin berhasil diambil.', [
+            'history' => $historyData,
+            'summary' => [
+                'total_sessions' => count($historyData),
+                'total_initial_fund' => (int) $totalInitialFund,
+            ],
+        ]);
     }
 
     public function getCanteenIncomeHistory(
@@ -450,84 +269,25 @@ class CanteenService
         ?string $range,
         int $perPage
     ): array {
-        $query = Canteen::where('id', $canteenId)
-            ->whereNotNull('opened_at')
-            ->orderBy('created_at', 'desc');
-
-        $timezone = 'Asia/Jakarta';
-
-        if ($specificDate) {
-            try {
-                $date = Carbon::parse($specificDate, $timezone);
-                $query->whereDate('created_at', $date->toDateString());
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($startDate && $endDate) {
-            try {
-                $start = Carbon::parse($startDate, $timezone)->startOfDay();
-                $end = Carbon::parse($endDate, $timezone)->endOfDay();
-
-                if ($start->gt($end)) {
-                    return [
-                        'status' => 'error',
-                        'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir.',
-                        'code' => 400
-                    ];
-                }
-
-                $query->whereBetween('created_at', [$start, $end]);
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($startDate) {
-            try {
-                $start = Carbon::parse($startDate, $timezone)->startOfDay();
-                $query->where('created_at', '>=', $start);
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($range) {
-            $now = Carbon::now($timezone);
-            switch ($range) {
-                case 'harian':
-                    $query->whereDate('created_at', $now->toDateString());
-                    break;
-                case 'mingguan':
-                    $query->whereBetween('created_at', [$now->startOfWeek(), $now->endOfWeek()]);
-                    break;
-                case 'bulanan':
-                    $query->whereMonth('created_at', $now->month)
-                        ->whereYear('created_at', $now->year);
-                    break;
-                case 'tahunan':
-                    $query->whereYear('created_at', $now->year);
-                    break;
-                default:
-                    return [
-                        'status' => 'error',
-                        'message' => 'Range tidak valid. Gunakan: harian, mingguan, bulanan, atau tahunan.',
-                        'code' => 400
-                    ];
-            }
+        $validationResult = $this->validateDateParameters($startDate, $endDate, $specificDate, $range);
+        if ($validationResult) {
+            return $validationResult;
         }
 
-        $paginatedCanteens = $query->orderBy('opened_at', 'desc')
-            ->paginate($perPage);
+        $paginatedCanteens = $this->canteenRepository->getCanteenHistoryByDateRange(
+            $canteenId,
+            $startDate,
+            $endDate,
+            $specificDate,
+            $range,
+            $perPage
+        );
 
         $canteens = $paginatedCanteens->items();
+
+        if (empty($canteens)) {
+            return HandleServiceResponse::errorResponse('Tidak ada riwayat pendapatan kantin berdasarkan ID ini', 404);
+        }
 
         $historyData = [];
         $totalIncome = 0;
@@ -552,29 +312,14 @@ class CanteenService
             ];
         }
 
-        $response = [
-            'status' => 'success',
-            'message' => 'Riwayat pendapatan kantin berhasil diambil.',
-            'code' => 200,
-            'data' => [
-                'history' => $historyData,
-                'summary' => [
-                    'total_sessions' => count($historyData),
-                    'total_income' => (int) $totalIncome,
-                    'total_profit' => (int) $totalProfit,
-                ],
-            ]
-        ];
-
-        if (empty($historyData)) {
-            return [
-                'status' => 'error',
-                'message' => 'Tidak ada riwayat pendapatan kantin berdasarkan ID ini',
-                'code' => 404
-            ];
-        }
-
-        return $response;
+        return HandleServiceResponse::successResponse('Riwayat pendapatan kantin berhasil diambil.', [
+            'history' => $historyData,
+            'summary' => [
+                'total_sessions' => count($historyData),
+                'total_income' => (int) $totalIncome,
+                'total_profit' => (int) $totalProfit,
+            ],
+        ]);
     }
 
     public function getGeneralCanteenIncomeHistory(
@@ -584,92 +329,27 @@ class CanteenService
         ?string $range,
         int $perPage
     ): array {
-        $query = Canteen::whereNotNull('opened_at')
-            ->orderBy('created_at', 'desc');
-
-        $timezone = 'Asia/Jakarta';
-
-        if ($specificDate) {
-            try {
-                $date = Carbon::parse($specificDate, $timezone);
-                $query->whereDate('created_at', $date->toDateString());
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($startDate && $endDate) {
-            try {
-                $start = Carbon::parse($startDate, $timezone)->startOfDay();
-                $end = Carbon::parse($endDate, $timezone)->endOfDay();
-
-                if ($start->gt($end)) {
-                    return [
-                        'status' => 'error',
-                        'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir.',
-                        'code' => 400
-                    ];
-                }
-
-                $query->whereBetween('created_at', [$start, $end]);
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($startDate) {
-            try {
-                $start = Carbon::parse($startDate, $timezone)->startOfDay();
-                $query->where('created_at', '>=', $start);
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($range) {
-            $now = Carbon::now($timezone);
-            switch ($range) {
-                case 'harian':
-                    $query->whereDate('created_at', $now->toDateString());
-                    break;
-                case 'mingguan':
-                    $query->whereBetween('created_at', [$now->startOfWeek(), $now->endOfWeek()]);
-                    break;
-                case 'bulanan':
-                    $query->whereMonth('created_at', $now->month)
-                        ->whereYear('created_at', $now->year);
-                    break;
-                case 'tahunan':
-                    $query->whereYear('created_at', $now->year);
-                    break;
-                default:
-                    return [
-                        'status' => 'error',
-                        'message' => 'Range tidak valid. Gunakan: harian, mingguan, bulanan, atau tahunan.',
-                        'code' => 400
-                    ];
-            }
+        $validationResult = $this->validateDateParameters($startDate, $endDate, $specificDate, $range);
+        if ($validationResult) {
+            return $validationResult;
         }
 
-        $paginatedCanteens = $query->with(['opener:id,name'])
-            ->orderBy('opened_at', 'desc')
-            ->paginate($perPage);
+        $paginatedCanteens = $this->canteenRepository->getCanteenHistoryByDateRange(
+            null,
+            $startDate,
+            $endDate,
+            $specificDate,
+            $range,
+            $perPage
+        );
 
         $canteens = $paginatedCanteens->items();
-
         $historyData = [];
         $totalIncome = 0;
         $totalProfit = 0;
 
         foreach ($canteens as $canteen) {
             $netProfit = $canteen->current_balance - $canteen->initial_balance;
-
             $totalIncome += $canteen->current_balance;
             $totalProfit += $netProfit;
 
@@ -687,18 +367,47 @@ class CanteenService
             ];
         }
 
-        return [
-            'status' => 'success',
-            'message' => 'Riwayat pendapatan kantin berhasil diambil.',
-            'code' => 200,
-            'data' => [
-                'history' => $historyData,
-                'summary' => [
-                    'total_sessions' => count($historyData),
-                    'total_income' => (int) $totalIncome,
-                    'total_profit' => (int) $totalProfit,
-                ],
-            ]
-        ];
+        return HandleServiceResponse::successResponse('Riwayat pendapatan kantin berhasil diambil.', [
+            'history' => $historyData,
+            'summary' => [
+                'total_sessions' => count($historyData),
+                'total_income' => (int) $totalIncome,
+                'total_profit' => (int) $totalProfit,
+            ],
+        ]);
+    }
+
+    private function isCanteenGuard($user): bool
+    {
+        return strtolower($user->role->role_name) === 'penjaga kantin';
+    }
+
+    private function validateDateParameters(
+        ?string $startDate,
+        ?string $endDate,
+        ?string $specificDate,
+        ?string $range
+    ): ?array {
+        if ($specificDate && !$this->canteenRepository->validateDateFormat($specificDate)) {
+            return HandleServiceResponse::errorResponse('Format tanggal tidak valid. Gunakan format YYYY-MM-DD.', 400);
+        }
+
+        if ($startDate && !$this->canteenRepository->validateDateFormat($startDate)) {
+            return HandleServiceResponse::errorResponse('Format tanggal tidak valid. Gunakan format YYYY-MM-DD.', 400);
+        }
+
+        if ($endDate && !$this->canteenRepository->validateDateFormat($endDate)) {
+            return HandleServiceResponse::errorResponse('Format tanggal tidak valid. Gunakan format YYYY-MM-DD.', 400);
+        }
+
+        if ($startDate && $endDate && !$this->canteenRepository->validateDateRange($startDate, $endDate)) {
+            return HandleServiceResponse::errorResponse('Tanggal mulai tidak boleh lebih besar dari tanggal akhir.', 400);
+        }
+
+        if ($range && !$this->canteenRepository->isValidRange($range)) {
+            return HandleServiceResponse::errorResponse('Range tidak valid. Gunakan: harian, mingguan, bulanan, atau tahunan.', 400);
+        }
+
+        return null;
     }
 }

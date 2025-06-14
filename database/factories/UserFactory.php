@@ -24,7 +24,7 @@ class UserFactory extends Factory
             'email' => $this->faker->unique()->safeEmail(),
             'password' => Hash::make('password'),
             'phone' => $this->faker->phoneNumber(),
-            'pin' => str_pad(rand(0, 999999), 6, '0', STR_PAD_LEFT),
+            'pin' => Hash::make( str_pad(rand(0, 999999), 6, '0', STR_PAD_LEFT)),
             'nis' => $role == 2 ? $this->faker->numerify('##########') : null,
             'nip' => in_array($role, [3, 4, 5]) ? $this->faker->numerify('############') : null,
             'batch' => rand(2015, 2025),

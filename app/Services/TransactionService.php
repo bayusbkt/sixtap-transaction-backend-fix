@@ -3,63 +3,55 @@
 namespace App\Services;
 
 use App\Helpers\HandleEmailNotification;
+use App\Helpers\HandleServiceResponse;
 use App\Helpers\LogFailedTransaction;
-use App\Models\Absence;
-use App\Models\Canteen;
-use App\Models\RfidCard;
-use App\Models\Transaction;
-use App\Models\User;
-use App\Models\Wallet;
-use Illuminate\Support\Carbon;
+use App\Repositories\TransactionRepository;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
-
 class TransactionService
 {
+    protected $transactionRepository;
+
+    public function __construct(TransactionRepository $transactionRepository)
+    {
+        $this->transactionRepository = $transactionRepository;
+    }
+
     public function handleTopUp(string $cardUid, int $amount): array
     {
         try {
             DB::beginTransaction();
 
-            $card = RfidCard::where('card_uid', $cardUid) ->where('is_active', true)->first();
+            $card = $this->transactionRepository->findRfidCardByUid($cardUid);
 
             if (!$card) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Kartu tidak ditemukan atau tidak aktif.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Kartu tidak ditemukan atau tidak aktif.',  404);
             }
 
-            $wallet = Wallet::where('user_id', $card->user_id)->lockForUpdate()->first();
+            $wallet = $this->transactionRepository->findWalletByUserId($card->user_id, true);
 
             if (!$wallet) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Wallet pengguna tidak ditemukan.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Wallet pengguna tidak ditemukan.',  404);
             }
 
             $oldBalance = $wallet->balance;
             $newBalance = $oldBalance + $amount;
 
-            $wallet->update([
+            $this->transactionRepository->updateWallet($wallet, [
                 'balance' => $newBalance,
                 'last_top_up' => now()
             ]);
 
-            $transaction = Transaction::create([
+            $transaction = $this->transactionRepository->createTransaction([
                 'user_id' => $card->user_id,
                 'rfid_card_id' => $card->id,
                 'canteen_id' => null,
                 'type' => 'top up',
                 'status' => 'berhasil',
                 'amount' => $amount,
-
             ]);
 
             $dataCard = $card->load('user');
@@ -68,12 +60,7 @@ class TransactionService
 
             HandleEmailNotification::topUp($dataCard->user, $amount, $newBalance, $transaction->id);
 
-            return [
-                'status' => 'success',
-                'message' => 'Top up berhasil.',
-                'code' => 200,
-                'data' => $dataCard,
-            ];
+            return HandleServiceResponse::successResponse('Top up berhasil.', [$dataCard], 200);
         } catch (\Exception $e) {
             DB::rollback();
 
@@ -89,78 +76,50 @@ class TransactionService
                 'Kesalahan pada server.'
             );
 
-            return [
-                'status' => 'error',
-                'message' => 'Top up gagal.',
-                'code' => 500,
-            ];
+            return HandleServiceResponse::errorResponse('Top up gagal', 500);
         }
     }
 
     public function getTopUpDetail(int $transactionId): array
     {
         try {
-            $transaction = Transaction::where('id', $transactionId)
-                ->where('type', 'top up')
-                ->where('status', 'berhasil')
-                ->with([
-                    'user:id,name,email,batch,schoolclass_id',
-                    'user.schoolClass:id,class_name',
-                    'rfidCard:id,card_uid',
-                ])
-                ->first();
+            $transaction = $this->transactionRepository->findTopUpTransaction($transactionId);
 
             if (!$transaction) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Transaksi top up tidak ditemukan.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Transaksi top up tidak ditemukan.', 404);
             }
 
-            $wallet = Wallet::where('user_id', $transaction->user_id)->first();
+            $wallet = $this->transactionRepository->findWalletByUserId($transaction->user_id);
 
             if (!$wallet) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Wallet pengguna tidak ditemukan.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Wallet pengguna tidak ditemukan.', 404);
             }
 
-            $walletBalanceBeforeTopUp = $wallet ?
-                $wallet->balance - $transaction->amount : 0;
+            $walletBalanceBeforeTopUp = $wallet ? $wallet->balance - $transaction->amount : 0;
 
-            return [
-                'status' => 'success',
-                'message' => 'Detail top up berhasil didapatkan.',
-                'code' => 200,
-                'data' => [
-                    'top_up_info' => [
-                        'top_up_transaction_id' => $transaction->id,
-                        'top_up_amount' => $transaction->amount,
-                        'top_up_date' => $transaction->created_at,
-                    ],
-                    'user_info' => [
-                        'id' => $transaction->user->id,
-                        'name' => $transaction->user->name,
-                        'email' => $transaction->user->email ?? null,
-                        'batch' => $transaction->user->batch,
-                        'class' => $transaction->user->schoolClass->class_name ?? null,
-                        'rfid_card_uid' => $transaction->rfidCard->card_uid ?? null
-                    ],
-                    'wallet_info' => [
-                        'balance_before_top_up' => $walletBalanceBeforeTopUp,
-                        'balance_after_top_up' => $wallet->balance ?? 0,
-                    ],
-                ]
+            $responseData = [
+                'top_up_info' => [
+                    'top_up_transaction_id' => $transaction->id,
+                    'top_up_amount' => $transaction->amount,
+                    'top_up_date' => $transaction->created_at,
+                ],
+                'user_info' => [
+                    'id' => $transaction->user->id,
+                    'name' => $transaction->user->name,
+                    'email' => $transaction->user->email ?? null,
+                    'batch' => $transaction->user->batch,
+                    'class' => $transaction->user->schoolClass->class_name ?? null,
+                    'rfid_card_uid' => $transaction->rfidCard->card_uid ?? null
+                ],
+                'wallet_info' => [
+                    'balance_before_top_up' => $walletBalanceBeforeTopUp,
+                    'balance_after_top_up' => $wallet->balance ?? 0,
+                ],
             ];
+
+            return HandleServiceResponse::successResponse('Detail top up berhasil didapatkan.', [$responseData], 200);
         } catch (\Exception $e) {
-            return [
-                'status' => 'error',
-                'message' => 'Terjadi kesalahan saat mengambil detail top up.',
-                'code' => 500
-            ];
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat memproses detail top up.', 500);
         }
     }
 
@@ -171,212 +130,71 @@ class TransactionService
         ?string $range,
         int $perPage
     ): array {
-        $query = Transaction::where('type', 'top up')
-            ->with([
-                'user:id,name,batch,schoolclass_id',
-                'user.schoolClass:id,class_name',
-                'rfidCard:id,card_uid'
-            ])
-            ->orderBy('created_at', 'desc');
-
-        $timezone = 'Asia/Jakarta';
-
-        if ($specificDate) {
-            try {
-                $date = Carbon::parse($specificDate, $timezone);
-                $query->whereDate('created_at', $date->toDateString());
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($startDate && $endDate) {
-            try {
-                $start = Carbon::parse($startDate, $timezone)->startOfDay();
-                $end = Carbon::parse($endDate, $timezone)->endOfDay();
-
-                if ($start->gt($end)) {
-                    return [
-                        'status' => 'error',
-                        'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir.',
-                        'code' => 400
-                    ];
-                }
-
-                $query->whereBetween('created_at', [$start, $end]);
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($startDate) {
-            try {
-                $start = Carbon::parse($startDate, $timezone)->startOfDay();
-                $query->where('created_at', '>=', $start);
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($range) {
-            $now = Carbon::now($timezone);
-            switch ($range) {
-                case 'harian':
-                    $query->whereDate('created_at', $now->toDateString());
-                    break;
-                case 'mingguan':
-                    $query->whereBetween('created_at', [$now->startOfWeek(), $now->endOfWeek()]);
-                    break;
-                case 'bulanan':
-                    $query->whereMonth('created_at', $now->month)
-                        ->whereYear('created_at', $now->year);
-                    break;
-                case 'tahunan':
-                    $query->whereYear('created_at', $now->year);
-                    break;
-                default:
-                    return [
-                        'status' => 'error',
-                        'message' => 'Range tidak valid. Gunakan: harian, mingguan, bulanan, atau tahunan.',
-                        'code' => 400
-                    ];
-            }
-        }
-
-        $topUpHistory = $query->paginate($perPage);
-
+        $topUpHistory = $this->transactionRepository->getTopUpHistory(
+            $startDate,
+            $endDate,
+            $specificDate,
+            $range,
+            $perPage
+        );
 
         if ($topUpHistory->isEmpty()) {
-            return [
-                'status' => 'error',
-                'message' => 'Tidak ada riwayat top up.',
-                'code' => 404
-            ];
+            return HandleServiceResponse::errorResponse('Tidak ada riwayat top up.', 404);
         }
 
-        return [
-            'status' => 'success',
-            'message' => 'Riwayat top up berhasil didapatkan.',
-            'code' => 200,
-            'data' => $topUpHistory
-        ];
+        return HandleServiceResponse::successResponse('Riwayat top up berhasil didapatkan.', [$topUpHistory], 200);
     }
 
     private function validateTransaction(string $cardUid, int $amount, int $canteenOpenerId): array
     {
         try {
-            $card = RfidCard::where('card_uid', $cardUid)->first();
+            $card = $this->transactionRepository->findRfidCardByUid($cardUid);
 
             if (!$card || !$card->user_id) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Kartu tidak ditemukan atau tidak terhubung dengan pengguna.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Kartu tidak ditemukan atau tidak terhubung dengan pengguna.', 404);
             }
 
             if (!$card->is_active) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Kartu tidak aktif.',
-                    'code' => 422
-                ];
+                return HandleServiceResponse::errorResponse('Kartu tidak aktif.', 422);
             }
 
-            $today = now()->format('Y-m-d');
-            $todayName = now()->format('l');
-
-            $absence = Absence::where('user_id', $card->user_id)
-                ->where('day', $todayName)
-                ->whereDate('time_in', $today)
-                ->first();
+            $absence = $this->transactionRepository->findAbsenceForToday($card->user_id);
 
             if (!$absence) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Siswa belum melakukan absensi hari ini.',
-                    'code' => 422
-                ];
+                return HandleServiceResponse::errorResponse('Siswa belum melakukan absensi hari ini.', 422);
             }
 
             if (!$absence->time_in) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Siswa belum melakukan absensi masuk.',
-                    'code' => 422
-                ];
+                return HandleServiceResponse::errorResponse('Siswa belum melakukan absensi masuk.', 422);
             }
 
             if ($absence->time_out) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Siswa sudah melakukan absensi keluar. Transaksi tidak dapat dilakukan.',
-                    'code' => 422
-                ];
+                return HandleServiceResponse::errorResponse('Siswa sudah melakukan absensi keluar. Transaksi tidak dapat dilakukan.', 422);
             }
 
-            $canteen = Canteen::where('opened_by', $canteenOpenerId)
-                ->whereNotNull('opened_at')
-                ->whereNull('closed_at')
-                ->latest()
-                ->first();
+            $canteen = $this->transactionRepository->findOpenCanteenByOpener($canteenOpenerId);
 
             if (!$canteen) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Tidak ada kantin yang sedang dibuka oleh pengguna ini.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Tidak ada kantin yang sedang dibuka oleh pengguna ini.', 404);
             }
 
             if ($canteen->opened_at == null || $canteen->opened_at > now()) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Kantin belum dibuka.',
-                    'code' => 422
-                ];
+                return HandleServiceResponse::errorResponse('Kantin belum dibuka.', 422);
             }
 
-            $wallet = Wallet::where('user_id', $card->user_id)->first();
+            $wallet = $this->transactionRepository->findWalletByUserId($card->user_id);
 
             if (!$wallet) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Wallet pengguna tidak ditemukan.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Wallet pengguna tidak ditemukan.', 404);
             }
 
             if ($wallet->balance < $amount) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Saldo tidak mencukupi.',
-                    'code' => 422
-                ];
+                return HandleServiceResponse::errorResponse('Saldo tidak mencukupi', 422);
             }
 
-            return [
-                'status' => 'success',
-                'message' => 'Validasi berhasil.',
-                'code' => 200,
-                'data' => [
-                    'canteen_id' => $canteen->id,
-
-                ]
-            ];
+            return HandleServiceResponse::successResponse('Validasi transaksi pembelian berhasil.', ['canteen_id' => $canteen->id], 200);
         } catch (\Exception $e) {
-
-            return [
-                'status' => 'error',
-                'message' => 'Terjadi kesalahan saat validasi.',
-                'code' => 500,
-            ];
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat validasi transaksi pembelian.', 500);
         }
     }
 
@@ -393,18 +211,13 @@ class TransactionService
         try {
             DB::beginTransaction();
 
-            $card = RfidCard::where('card_uid', $cardUid)->with('user')->first();
-
-            $canteen = Canteen::find($canteenId);
+            $card = $this->transactionRepository->findRfidCardByUidWithRelation($cardUid);
+            $canteen = $this->transactionRepository->findCanteenById($canteenId);
 
             if ($amount > 20000) {
                 if (!$pin) {
                     DB::rollback();
-                    return [
-                        'status' => 'error',
-                        'message' => 'PIN diperlukan untuk transaksi di atas Rp 20.000.',
-                        'code' => 422
-                    ];
+                    return HandleServiceResponse::errorResponse('PIN diperlukan untuk transaksi di atas Rp 20.000', 422);
                 }
 
                 if (!Hash::check($pin, $card->user->pin)) {
@@ -419,15 +232,11 @@ class TransactionService
                         'PIN tidak valid.'
                     );
 
-                    return [
-                        'status' => 'error',
-                        'message' => 'PIN tidak valid.',
-                        'code' => 422
-                    ];
+                    return HandleServiceResponse::errorResponse('PIN tidak valid.', 422);
                 }
             }
 
-            $wallet = Wallet::where('user_id', $card->user_id)->lockForUpdate()->first();
+            $wallet = $this->transactionRepository->findWalletByUserId($card->user_id, true);
 
             if ($wallet->balance < $amount) {
                 DB::rollback();
@@ -441,27 +250,23 @@ class TransactionService
                     'Saldo tidak mencukupi.'
                 );
 
-                return [
-                    'status' => 'error',
-                    'message' => 'Saldo tidak mencukupi.',
-                    'code' => 422
-                ];
+                return HandleServiceResponse::errorResponse('Saldo tidak mencukupi.', 422);
             }
 
             $oldBalance = $wallet->balance;
             $newBalance = $oldBalance - $amount;
 
-            $wallet->update([
+            $this->transactionRepository->updateWallet($wallet, [
                 'balance' => $newBalance
             ]);
 
-            $canteen->update([
+            $this->transactionRepository->updateCanteen($canteen, [
                 'current_balance' => $canteen->current_balance + $amount
             ]);
 
             $canteenOpenerName = $canteen->opener->name;
 
-            $transaction = Transaction::create([
+            $transaction = $this->transactionRepository->createTransaction([
                 'user_id' => $card->user_id,
                 'rfid_card_id' => $card->id,
                 'canteen_id' => $canteen->id,
@@ -470,22 +275,19 @@ class TransactionService
                 'amount' => $amount,
             ]);
 
+            $responseData = [
+                'transaction_id' => $transaction->id,
+                'user' => $card->user->only(['id', 'name']),
+                'amount' => $amount,
+                'canteen_id' => $canteen->id,
+                'timestamp' => $transaction->created_at
+            ];
+
             DB::commit();
 
             HandleEmailNotification::purchase($card->user, $amount, $newBalance, $transaction->id, $canteenOpenerName);
 
-            return [
-                'status' => 'success',
-                'message' => 'Transaksi pembelian berhasil dilakukan.',
-                'code' => 200,
-                'data' => [
-                    'transaction_id' => $transaction->id,
-                    'user' => $card->user->only(['id', 'name']),
-                    'amount' => $amount,
-                    'canteen_id' => $canteen->id,
-                    'timestamp' => $transaction->created_at
-                ]
-            ];
+            return HandleServiceResponse::successResponse('Transaksi pembelian berhasil dilakukan.', [$responseData], 200);
         } catch (\Exception $e) {
             DB::rollback();
 
@@ -504,67 +306,39 @@ class TransactionService
                 );
             }
 
-            return [
-                'status' => 'error',
-                'message' => 'Transaksi pembelian gagal.',
-                'code' => 500,
-            ];
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat memproses transaksi pembelian.', 500);
         }
     }
 
     public function getPurchaseDetail(int $userId, int $transactionId): array
     {
-        $user = User::find($userId);
+        $user = $this->transactionRepository->findUserById($userId);
 
         if (!$user) {
-            return [
-                'status' => 'error',
-                'message' => 'Pengguna tidak ditemukan.',
-                'code' => 404
-            ];
+            return HandleServiceResponse::errorResponse('Pengguna tidak ditemukan.', 404);
         }
 
-        $transaction = Transaction::with([
-            'user:id,name,batch,schoolclass_id',
-            'user.schoolClass:id,class_name',
-            'rfidCard:id,card_uid',
-            'canteen:id,initial_balance,current_balance,opened_at,opened_by',
-            'canteen.opener:id,name'
-        ])->find($transactionId);
+        $transaction = $this->transactionRepository->findPurchaseTransactionWithRelations($transactionId);
 
         if (!$transaction) {
-            return [
-                'status' => 'error',
-                'message' => 'Transaksi tidak ditemukan.',
-                'code' => 404
-            ];
+            return HandleServiceResponse::errorResponse('Transaksi pembelian tidak ditemukan.', 404);
         }
 
         $isStudent = strtolower($user->role->role_name) === 'siswa';
 
         if ($isStudent && $transaction->user_id !== $userId) {
-            return [
-                'status' => 'error',
-                'message' => 'Anda tidak memiliki akses ke transaksi ini.',
-                'code' => 403
-            ];
+            return HandleServiceResponse::errorResponse('Anda tidak memiliki akses ke transaksi ini.', 403);
         }
 
         if ($isStudent) {
-            $wallet = Wallet::where('user_id', $userId)->first();
+            $wallet = $this->transactionRepository->findWalletByUserId($userId);
 
             if (!$wallet) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Wallet pengguna tidak ditemukan.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Wallet pengguna tidak ditemukan.', 404);
             }
 
             $walletBalanceBeforePurchase = $wallet ? $wallet->balance + $transaction->amount : 0;
         }
-
-
 
         $response = [
             'status' => 'success',
@@ -612,7 +386,7 @@ class TransactionService
             ];
         }
 
-        return $response;
+        return HandleServiceResponse::successResponse('Kantin berhasil dibuka.', [$response], 200);
     }
 
     public function getCanteenTransactionHistory(
@@ -627,122 +401,29 @@ class TransactionService
         $validTypes = ['pembelian', 'refund', 'pencairan'];
         $validStatus = ['berhasil', 'menunggu', 'gagal'];
 
-        $query = Transaction::query()
-            ->with([
-                'user:id,name,batch,schoolclass_id',
-                'user.schoolClass:id,class_name',
-                'rfidCard:id,card_uid',
-                'canteen:id,initial_balance,current_balance,opened_at,opened_by',
-                'canteen.opener:id,name'
-            ])
-            ->orderBy('created_at', 'desc');
-
-        if ($type && in_array($type, $validTypes)) {
-            $query->where('type', $type);
-        } elseif ($type) {
-            return [
-                'status' => 'error',
-                'message' => 'Tipe transaksi tidak valid. Hanya pembelian, refund, dan pencairan yang diizinkan.',
-                'code' => 400
-            ];
+        if ($type && !in_array($type, $validTypes)) {
+            return HandleServiceResponse::errorResponse('Tipe transaksi tidak valid. Hanya pembelian, refund, dan pencairan yang diizinkan.', 400);
         }
 
-        if ($status && in_array($status, $validStatus)) {
-            $query->where('status', $status);
-        } elseif ($status) {
-            return [
-                'status' => 'error',
-                'message' => 'Tipe status transaksi tidak valid. Hanya berhasil, menunggu, dan gagal yang diizinkan.',
-                'code' => 400
-            ];
+        if ($status && !in_array($status, $validStatus)) {
+            return HandleServiceResponse::errorResponse('Tipe status transaksi tidak valid. Hanya berhasil, menunggu, dan gagal yang diizinkan', 400);
         }
 
-        $timezone = 'Asia/Jakarta';
-
-        if ($specificDate) {
-            try {
-                $date = Carbon::parse($specificDate, $timezone);
-                $query->whereDate('created_at', $date->toDateString());
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($startDate && $endDate) {
-            try {
-                $start = Carbon::parse($startDate, $timezone)->startOfDay();
-                $end = Carbon::parse($endDate, $timezone)->endOfDay();
-
-                if ($start->gt($end)) {
-                    return [
-                        'status' => 'error',
-                        'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir.',
-                        'code' => 400
-                    ];
-                }
-
-                $query->whereBetween('created_at', [$start, $end]);
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($startDate) {
-            try {
-                $start = Carbon::parse($startDate, $timezone)->startOfDay();
-                $query->where('created_at', '>=', $start);
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($range) {
-            $now = Carbon::now($timezone);
-            switch ($range) {
-                case 'harian':
-                    $query->whereDate('created_at', $now->toDateString());
-                    break;
-                case 'mingguan':
-                    $query->whereBetween('created_at', [$now->startOfWeek(), $now->endOfWeek()]);
-                    break;
-                case 'bulanan':
-                    $query->whereMonth('created_at', $now->month)
-                        ->whereYear('created_at', $now->year);
-                    break;
-                case 'tahunan':
-                    $query->whereYear('created_at', $now->year);
-                    break;
-                default:
-                    return [
-                        'status' => 'error',
-                        'message' => 'Range tidak valid. Gunakan: harian, mingguan, bulanan, atau tahunan.',
-                        'code' => 400
-                    ];
-            }
-        }
-
-        $transactionHistory = $query->paginate($perPage);
+        $transactionHistory = $this->transactionRepository->getCanteenTransactionHistory(
+            $type,
+            $status,
+            $startDate,
+            $endDate,
+            $specificDate,
+            $range,
+            $perPage
+        );
 
         if ($transactionHistory->isEmpty()) {
-            return [
-                'status' => 'error',
-                'message' => 'Tidak ada riwayat transaksi.',
-                'code' => 404
-            ];
+            return HandleServiceResponse::errorResponse('Tidak ada riwayat transaksi.', 404);
         }
 
-        return [
-            'status' => 'success',
-            'message' => 'Riwayat transaksi berhasil didapatkan.',
-            'code' => 200,
-            'data' => $transactionHistory
-        ];
+        return HandleServiceResponse::successResponse('Kantin berhasil dibuka.', [$transactionHistory], 200);
     }
 
     public function getPersonalTransactionHistory(
@@ -758,216 +439,87 @@ class TransactionService
         $validTypes = ['top up', 'pembelian', 'refund'];
         $validStatus = ['berhasil', 'gagal'];
 
-        $query = Transaction::where('user_id', $userId)
-            ->with([
-                'user:id,name,batch,schoolclass_id',
-                'user.schoolClass:id,class_name',
-                'rfidCard:id,card_uid',
-                'canteen:id,initial_balance,current_balance,opened_at,opened_by',
-                'canteen.opener:id,name'
-            ])
-            ->orderBy('created_at', 'desc');
-
-        if ($type && in_array($type, $validTypes)) {
-            $query->where('type', $type);
-        } elseif ($type) {
-            return [
-                'status' => 'error',
-                'message' => 'Tipe transaksi tidak valid. Hanya top up, pembelian dan refund yang diizinkan.',
-                'code' => 400
-            ];
+        if ($type && !in_array($type, $validTypes)) {
+            return HandleServiceResponse::errorResponse('Tipe transaksi tidak valid. Hanya top up, pembelian, dan refund yang diizinkan.', 400);
         }
 
-        if ($status && in_array($status, $validStatus)) {
-            $query->where('status', $status);
-        } elseif ($status) {
-            return [
-                'status' => 'error',
-                'message' => 'Tipe status transaksi tidak valid. Hanya berhasil atau gagal yang diizinkan.',
-                'code' => 400
-            ];
+        if ($status && !in_array($status, $validStatus)) {
+            return HandleServiceResponse::errorResponse('Tipe status transaksi tidak valid. Hanya berhasil atau gagal yang diizinkan.', 400);
         }
 
-        $timezone = 'Asia/Jakarta';
-
-        if ($specificDate) {
-            try {
-                $date = Carbon::parse($specificDate, $timezone);
-                $query->whereDate('created_at', $date->toDateString());
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($startDate && $endDate) {
-            try {
-                $start = Carbon::parse($startDate, $timezone)->startOfDay();
-                $end = Carbon::parse($endDate, $timezone)->endOfDay();
-
-                if ($start->gt($end)) {
-                    return [
-                        'status' => 'error',
-                        'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir.',
-                        'code' => 400
-                    ];
-                }
-
-                $query->whereBetween('created_at', [$start, $end]);
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($startDate) {
-            try {
-                $start = Carbon::parse($startDate, $timezone)->startOfDay();
-                $query->where('created_at', '>=', $start);
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($range) {
-            $now = Carbon::now($timezone);
-            switch ($range) {
-                case 'harian':
-                    $query->whereDate('created_at', $now->toDateString());
-                    break;
-                case 'mingguan':
-                    $query->whereBetween('created_at', [$now->startOfWeek(), $now->endOfWeek()]);
-                    break;
-                case 'bulanan':
-                    $query->whereMonth('created_at', $now->month)
-                        ->whereYear('created_at', $now->year);
-                    break;
-                case 'tahunan':
-                    $query->whereYear('created_at', $now->year);
-                    break;
-                default:
-                    return [
-                        'status' => 'error',
-                        'message' => 'Range tidak valid. Gunakan: harian, mingguan, bulanan, atau tahunan.',
-                        'code' => 400
-                    ];
-            }
-        }
-
-        $transactionHistory = $query->paginate($perPage);
+        $transactionHistory = $this->transactionRepository->getPersonalTransactionHistory(
+            $userId,
+            $type,
+            $status,
+            $startDate,
+            $endDate,
+            $specificDate,
+            $range,
+            $perPage
+        );
 
         if ($transactionHistory->isEmpty()) {
-            return [
-                'status' => 'error',
-                'message' => 'Tidak ada riwayat transaksi.',
-                'code' => 404
-            ];
+            return HandleServiceResponse::errorResponse('Tidak ada riwayat transaksi.', 404);
         }
 
-        return [
-            'status' => 'success',
-            'message' => 'Riwayat transaksi berhasil didapatkan.',
-            'code' => 200,
-            'data' => $transactionHistory
-        ];
+        return HandleServiceResponse::successResponse('Riwayat transaksi berhasil didapatkan..', [$transactionHistory], 200);
     }
 
     public function handleRefundTransaction(int $transactionId, int $canteenOpenerId, string $note): array
     {
-
         try {
             DB::beginTransaction();
 
-            $originalTransaction = Transaction::where('id', $transactionId)
-                ->where('type', 'pembelian')
-                ->where('status', 'berhasil')
-                ->with(['user', 'rfidCard', 'canteen'])
-                ->first();
+            $originalTransaction = $this->transactionRepository->findSuccessfulPurchaseTransaction($transactionId);
 
             if (!$originalTransaction) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Transaksi pembelian tidak ditemukan atau sudah di-refund.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Transaksi pembelian tidak ditemukan atau sudah di-refund.', 404);
             }
 
-            $existingRefund = Transaction::where('type', 'refund')
-                ->where('note', 'like', "%Refund untuk transaksi ID: $transactionId%")
-                ->first();
+            $existingRefund = $this->transactionRepository->findExistingRefund($transactionId);
 
             if ($existingRefund) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Transaksi ini sudah pernah di-refund.',
-                    'code' => 422
-                ];
+                return HandleServiceResponse::errorResponse('Transaksi ini sudah pernah di-refund.', 422);
             }
 
-            $canteen = Canteen::where('opened_by', $canteenOpenerId)
-                ->whereNotNull('opened_at')
-                ->whereNull('closed_at')
-                ->latest()
-                ->first();
+            $canteen = $this->transactionRepository->findOpenCanteenByOpener($canteenOpenerId);
 
             if (!$canteen) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Tidak ada kantin yang sedang dibuka oleh pengguna ini.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Tidak ada kantin yang sedang dibuka oleh pengguna ini.', 404);
             }
 
             if ($originalTransaction->canteen_id !== $canteen->id) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Refund hanya dapat dilakukan di kantin tempat transaksi asli.',
-                    'code' => 422
-                ];
+                return HandleServiceResponse::errorResponse('Refund hanya dapat dilakukan di kantin tempat transaksi asli.', 422);
             }
 
             if ($canteen->current_balance < $originalTransaction->amount) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Saldo kantin tidak mencukupi untuk melakukan refund.',
-                    'code' => 422
-                ];
+                return HandleServiceResponse::errorResponse('Saldo kantin tidak mencukupi untuk melakukan refund.', 422);
             }
 
-            $wallet = Wallet::where('user_id', $originalTransaction->user_id)
-                ->lockForUpdate()
-                ->first();
+            $wallet = $this->transactionRepository->findWalletByUserId($originalTransaction->user_id, true);
 
             if (!$wallet) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Wallet pengguna tidak ditemukan.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Wallet pengguna tidak ditemukan.', 404);
             }
 
             $oldBalance = $wallet->balance;
             $newBalance = $oldBalance + $originalTransaction->amount;
 
-            $wallet->update([
+            $this->transactionRepository->updateWallet($wallet, [
                 'balance' => $newBalance
             ]);
 
-            $canteen->update([
+            $this->transactionRepository->updateCanteen($canteen, [
                 'current_balance' => $canteen->current_balance - $originalTransaction->amount
             ]);
 
-            $refundTransaction = Transaction::create([
+            $refundTransaction = $this->transactionRepository->createTransaction([
                 'user_id' => $originalTransaction->user_id,
                 'rfid_card_id' => $originalTransaction->rfid_card_id,
                 'canteen_id' => $canteen->id,
@@ -988,20 +540,17 @@ class TransactionService
                 $note
             );
 
-            return [
-                'status' => 'success',
-                'message' => 'Refund transaksi berhasil dilakukan.',
-                'code' => 200,
-                'data' => [
-                    'refund_transaction_id' => $refundTransaction->id,
-                    'original_transaction_id' => $originalTransaction->id,
-                    'user' => $originalTransaction->user->only(['id', 'name']),
-                    'refund_amount' => $originalTransaction->amount,
-                    'canteen_id' => $canteen->id,
-                    'timestamp' => $refundTransaction->created_at,
-                    'note' => $note
-                ]
+            $responseData = [
+                'refund_transaction_id' => $refundTransaction->id,
+                'original_transaction_id' => $originalTransaction->id,
+                'user' => $originalTransaction->user->only(['id', 'name']),
+                'refund_amount' => $originalTransaction->amount,
+                'canteen_id' => $canteen->id,
+                'timestamp' => $refundTransaction->created_at,
+                'note' => $note
             ];
+
+            return HandleServiceResponse::successResponse('Refund transaksi berhasil dilakukan.', [$responseData], 200);
         } catch (\Exception $e) {
             DB::rollback();
 
@@ -1019,45 +568,23 @@ class TransactionService
                 'Kesalahan pada server saat melakukan refund.'
             );
 
-            return [
-                'status' => 'error',
-                'message' => 'Refund transaksi gagal.',
-                'code' => 500,
-            ];
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat memproses refund.', 500);
         }
     }
 
     public function getRefundDetail(int $userId, int $refundTransactionId): array
     {
         try {
-            $user = User::find($userId);
+            $user = $this->transactionRepository->findUserById($userId);
 
             if (!$user) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Pengguna tidak ditemukan.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Pengguna tidak ditemukan.', 404);
             }
 
-            $refundTransaction = Transaction::where('id', $refundTransactionId)
-                ->where('type', 'refund')
-                ->where('status', 'berhasil')
-                ->with([
-                    'user:id,name,email,batch,schoolclass_id',
-                    'user.schoolClass:id,class_name',
-                    'rfidCard:id,card_uid',
-                    'canteen:id,initial_balance,current_balance,opened_at,closed_at,opened_by',
-                    'canteen.opener:id,name'
-                ])
-                ->first();
+            $refundTransaction = $this->transactionRepository->findRefundTransaction($refundTransactionId);
 
             if (!$refundTransaction) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Transaksi refund tidak ditemukan.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Transaksi refund tidak ditemukan.', 404);
             }
 
             $originalTransactionId = null;
@@ -1067,35 +594,19 @@ class TransactionService
 
             $originalTransaction = null;
             if ($originalTransactionId) {
-                $originalTransaction = Transaction::where('id', $originalTransactionId)
-                    ->where('type', 'pembelian')
-                    ->with([
-                        'user:id,name,',
-                        'rfidCard:id,card_uid',
-                        'canteen:id,opened_by',
-                        'canteen.opener:id,name'
-                    ])
-                    ->first();
+                $originalTransaction = $this->transactionRepository->findOriginalTransaction($originalTransactionId);
             }
 
             $isStudent = strtolower($user->role->role_name) === 'siswa';
 
             if ($isStudent && $refundTransaction->user_id !== $userId) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Anda tidak memiliki akses ke transaksi ini.',
-                    'code' => 403
-                ];
+                return HandleServiceResponse::errorResponse('Anda tidak memiliki akses ke transaksi ini.', 403);
             }
 
-            $walletAfterRefund = Wallet::where('user_id', $refundTransaction->user_id)->first();
+            $walletAfterRefund = $this->transactionRepository->findWalletByUserId($refundTransaction->user_id);
 
             if (!$walletAfterRefund) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Wallet pengguna tidak ditemukan.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Wallet pengguna tidak ditemukan.', 404);
             }
 
             $walletBalanceBeforeRefund = $walletAfterRefund ?
@@ -1165,13 +676,9 @@ class TransactionService
                 ];
             }
 
-            return $response;
+            return HandleServiceResponse::successResponse('Kantin berhasil dibuka.', [$response]);
         } catch (\Exception $e) {
-            return [
-                'status' => 'error',
-                'message' => 'Terjadi kesalahan saat mengambil detail refund.',
-                'code' => 500
-            ];
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat memproses detail refund.', 500);
         }
     }
 
@@ -1180,59 +687,36 @@ class TransactionService
         try {
             DB::beginTransaction();
 
-            $canteen = Canteen::find($canteenId);
+            $canteen = $this->transactionRepository->findCanteenById($canteenId);
 
             if (!$canteen) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Kantin tidak ditemukan.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Kantin tidak ditemukan.', 404);
             }
 
             if ($canteen->closed_at === null) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Kantin masih dalam status terbuka. Tutup kantin terlebih dahulu.',
-                    'code' => 422
-                ];
+                return HandleServiceResponse::errorResponse('Kantin masih dalam status terbuka. Tutup Kantin terlebih dahulu.', 422);
             }
 
             if ($canteen->current_balance < $amount) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Saldo kantin tidak mencukupi untuk pencairan saldo kantin.',
-                    'code' => 422
-                ];
+                return HandleServiceResponse::errorResponse('Saldo kantin tidak mencukupi untuk pencairan saldo kantin.', 422);
             }
 
             if ($amount <= 0) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Jumlah pencairan harus lebih dari 0.',
-                    'code' => 422
-                ];
+                return HandleServiceResponse::errorResponse('Jumlah pencairan harus lebih dari 0.', 422);
             }
 
-            $existingRequest = Transaction::where('canteen_id', $canteen->id)
-                ->where('type', 'pencairan')
-                ->where('status', 'menunggu')
-                ->first();
+            $existingRequest = $this->transactionRepository->findPendingWithdrawalForCanteen($canteen->id);
 
             if ($existingRequest) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Masih ada permintaan pencairan yang belum diproses untuk kantin ini.',
-                    'code' => 422
-                ];
+                return HandleServiceResponse::errorResponse('Masih ada permintaan pencairan yang belum diproses untuk kantin ini.', 422);
             }
 
-            $transaction = Transaction::create([
+            $transaction = $this->transactionRepository->createTransaction([
                 'user_id' => $canteen->opened_by,
                 'rfid_card_id' => 0,
                 'canteen_id' => $canteen->id,
@@ -1244,20 +728,17 @@ class TransactionService
 
             DB::commit();
 
-            return [
-                'status' => 'success',
-                'message' => 'Permintaan pencairan berhasil diajukan. Menunggu persetujuan admin.',
-                'code' => 200,
-                'data' => [
-                    'request_id' => $transaction->id,
-                    'canteen_id' => $canteen->id,
-                    'requested_amount' => $amount,
-                    'canteen_balance' => (int) $canteen->current_balance,
-                    'requested_by' => $canteen->opener->name,
-                    'status' => 'menunggu',
-                    'timestamp' => $transaction->created_at
-                ]
+            $responseData = [
+                'request_id' => $transaction->id,
+                'canteen_id' => $canteen->id,
+                'requested_amount' => $amount,
+                'canteen_balance' => (int) $canteen->current_balance,
+                'requested_by' => $canteen->opener->name,
+                'status' => 'menunggu',
+                'timestamp' => $transaction->created_at
             ];
+
+            return HandleServiceResponse::successResponse('Kantin berhasil dibuka.', [$responseData], 200);
         } catch (\Exception $e) {
             DB::rollback();
 
@@ -1275,11 +756,7 @@ class TransactionService
                 );
             }
 
-            return [
-                'status' => 'error',
-                'message' => 'Permintaan pencairan saldo kantin gagal diajukan.',
-                'code' => 500,
-            ];
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat memproses permintaan pencairan saldo kantin.', 500);
         }
     }
 
@@ -1288,45 +765,33 @@ class TransactionService
         try {
             DB::beginTransaction();
 
-            $request = Transaction::where('id', $requestId)
-                ->where('type', 'pencairan')
-                ->where('status', 'menunggu')
-                ->with('canteen')
-                ->first();
+            $request = $this->transactionRepository->findPendingWithdrawalRequest($requestId);
 
             if (!$request) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Permintaan pencairan saldo kantin tidak ditemukan atau sudah diproses.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Permintaan pencairan saldo kantin tidak ditemukan atau sudah diproses.', 404);
             }
 
             $canteen = $request->canteen;
 
             if ($canteen->current_balance < $request->amount) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Saldo kantin tidak mencukupi untuk pencairan.',
-                    'code' => 422
-                ];
+                return HandleServiceResponse::errorResponse('Saldo kantin tidak mencukupi untuk pencairan.', 422);
             }
 
             $oldBalance = $canteen->current_balance;
             $newBalance = $oldBalance - $request->amount;
 
-            $canteen->update([
+            $this->transactionRepository->updateCanteen($canteen, [
                 'current_balance' => $newBalance
             ]);
 
-            $request->update([
+            $this->transactionRepository->updateTransaction($request, [
                 'status' => 'berhasil',
                 'note' => $request->note . ' - Disetujui oleh admin ID: ' . $adminId
             ]);
 
-            $withdrawalTransaction = Transaction::create([
+            $withdrawalTransaction = $this->transactionRepository->createTransaction([
                 'user_id' => $request->user_id,
                 'rfid_card_id' => 0,
                 'canteen_id' => $canteen->id,
@@ -1338,30 +803,22 @@ class TransactionService
 
             DB::commit();
 
-            return [
-                'status' => 'success',
-                'message' => 'Permintaan pencairan saldo berhasil disetujui.',
-                'code' => 200,
-                'data' => [
-                    'withdrawal_transaction_id' => $withdrawalTransaction->id,
-                    'request_id' => $request->id,
-                    'canteen_id' => $canteen->id,
-                    'withdrawal_amount' => (int) $request->amount,
-                    'previous_balance' => (int) $oldBalance,
-                    'current_balance' => (int) $newBalance,
-                    'withdrawn_by' => $canteen->opener->name,
-                    'approved_by_admin_id' => $adminId,
-                    'timestamp' => now()
-                ]
+            $responseData = [
+                'withdrawal_transaction_id' => $withdrawalTransaction->id,
+                'request_id' => $request->id,
+                'canteen_id' => $canteen->id,
+                'withdrawal_amount' => (int) $request->amount,
+                'previous_balance' => (int) $oldBalance,
+                'current_balance' => (int) $newBalance,
+                'withdrawn_by' => $canteen->opener->name,
+                'approved_by_admin_id' => $adminId,
+                'timestamp' => now()
             ];
+
+            return HandleServiceResponse::successResponse('Permintaan pencairan saldo berhasil disetujui.', [$responseData], 200);
         } catch (\Exception $e) {
             DB::rollback();
-
-            return [
-                'status' => 'error',
-                'message' => 'Persetujuan pencairan saldo kantin gagal.',
-                'code' => 500,
-            ];
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat memproses persetujuan pencairan saldo kantin.', 500);
         }
     }
 
@@ -1370,71 +827,43 @@ class TransactionService
         try {
             DB::beginTransaction();
 
-            $request = Transaction::where('id', $requestId)
-                ->where('type', 'pencairan')
-                ->where('status', 'menunggu')
-                ->with('canteen')
-                ->first();
+            $request = $this->transactionRepository->findPendingWithdrawalRequest($requestId);
 
             if (!$request) {
                 DB::rollback();
-                return [
-                    'status' => 'error',
-                    'message' => 'Permintaan pencairan saldo kantin tidak ditemukan atau sudah diproses.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Permintaan pencairan saldo kantin tidak ditemukan atau sudah diproses.', 404);
             }
 
-            $request->update([
+            $this->transactionRepository->updateTransaction($request, [
                 'status' => 'gagal',
                 'note' => $request->note . ' - Ditolak oleh admin ID: ' . $adminId . ' - Alasan: ' . $rejectionReason
             ]);
 
             DB::commit();
 
-            return [
-                'status' => 'success',
-                'message' => 'Permintaan pencairan saldo kantin berhasil ditolak.',
-                'code' => 200,
-                'data' => [
-                    'request_id' => $request->id,
-                    'canteen_id' => $request->canteen->id,
-                    'requested_amount' => (int) $request->amount,
-                    'rejected_by_admin_id' => $adminId,
-                    'rejection_reason' => $rejectionReason,
-                    'timestamp' => now()
-                ]
+            $responseData = [
+                'request_id' => $request->id,
+                'canteen_id' => $request->canteen->id,
+                'requested_amount' => (int) $request->amount,
+                'rejected_by_admin_id' => $adminId,
+                'rejection_reason' => $rejectionReason,
+                'timestamp' => now()
             ];
+
+            return HandleServiceResponse::successResponse('Kantin berhasil dibuka.', [$responseData]);
         } catch (\Exception $e) {
             DB::rollback();
-
-            return [
-                'status' => 'error',
-                'message' => 'Penolakan pencairan saldo kantin gagal.',
-                'code' => 500,
-            ];
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat memproses penolakan pencairan saldo kantin', 500);
         }
     }
 
     public function getWithdrawalDetail(int $withdrawalId, bool $isStudent = false): array
     {
         try {
-            $withdrawalTransaction = Transaction::where('id', $withdrawalId)
-                ->where('type', 'pencairan')
-                ->with([
-                    'user',
-                    'user.schoolClass',
-                    'canteen',
-                    'canteen.opener'
-                ])
-                ->first();
+            $withdrawalTransaction = $this->transactionRepository->findWithdrawalTransaction($withdrawalId);
 
             if (!$withdrawalTransaction) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Transaksi pencairan tidak ditemukan.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Transaksi pencairan tidak ditemukan.', 404);
             }
 
             $customNote = '';
@@ -1483,175 +912,54 @@ class TransactionService
                 ];
             }
 
-            return $response;
+            return HandleServiceResponse::successResponse('Kantin berhasil dibuka.', [$response]);
         } catch (\Exception $e) {
-            return [
-                'status' => 'error',
-                'message' => 'Terjadi kesalahan saat mengambil detail pencairan.',
-                'code' => 500
-            ];
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat memproses detail pencairan.', 404);
         }
     }
 
     public function getPendingWithdrawalRequests(int $perPage): array
     {
         try {
-            $pendingRequests = Transaction::where('type', 'pencairan')
-                ->where('status', 'menunggu')
-                ->with([
-                    'user:id,name',
-                    'canteen:id,initial_balance,current_balance,opened_at,closed_at'
-                ])
-                ->orderBy('created_at', 'desc')
-                ->paginate($perPage);
+            $pendingRequests = $this->transactionRepository->getPendingWithdrawalRequests($perPage);
 
             if ($pendingRequests->isEmpty()) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Tidak ada permintaan pencairan saldo kantin yang menunggu persetujuan.',
-                    'code' => 404
-                ];
+                return HandleServiceResponse::errorResponse('Tidak ada permintaan pencairan saldo kantin yang menunggu persetujuan.', 404);
             }
 
-            return [
-                'status' => 'success',
-                'message' => 'Daftar permintaan pencairan saldo kantin berhasil didapatkan.',
-                'code' => 200,
-                'data' => $pendingRequests
-            ];
+            return HandleServiceResponse::successResponse('Daftar permintaan pencairan saldo kantin berhasil didapatkan.', [$pendingRequests], 200);
         } catch (\Exception $e) {
-            return [
-                'status' => 'error',
-                'message' => 'Gagal mengambil daftar permintaan pencairan saldo kantin.',
-                'code' => 500,
-            ];
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat memproses daftar permintaan pencairan saldo kantin', 500);
         }
     }
 
     public function getWithdrawalHistory(
-    ?string $status,
-    ?string $startDate,
-    ?string $endDate,
-    ?string $specificDate,
-    ?string $range,
-    int $perPage
-): array {
-    $validStatus = ['berhasil', 'menunggu', 'gagal'];
+        ?string $status,
+        ?string $startDate,
+        ?string $endDate,
+        ?string $specificDate,
+        ?string $range,
+        int $perPage
+    ): array {
+        $validStatus = ['berhasil', 'menunggu', 'gagal'];
 
-    try {
-        $query = Transaction::where('type', 'pencairan')
-            ->with([
-                'user:id,name,batch,schoolclass_id',
-                'user.schoolClass:id,class_name',
-                'canteen:id,initial_balance,current_balance,opened_at,closed_at,opened_by',
-                'canteen.opener:id,name',
-            ])
-            ->orderBy('created_at', 'desc');
-
-        if ($status && in_array($status, $validStatus)) {
-            $query->where('status', $status);
-        } elseif ($status) {
-            return [
-                'status' => 'error',
-                'message' => 'Status tidak valid. Hanya berhasil, menunggu, dan gagal yang diizinkan.',
-                'code' => 400
-            ];
+        if ($status && !in_array($status, $validStatus)) {
+            return HandleServiceResponse::errorResponse('Status tidak valid. Hanya berhasil, menunggu, dan gagal yang diizinkan.', 400);
         }
 
-        $timezone = 'Asia/Jakarta';
-
-        if ($specificDate) {
-            try {
-                $date = Carbon::parse($specificDate, $timezone);
-                $query->whereDate('created_at', $date->toDateString());
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($startDate && $endDate) {
-            try {
-                $start = Carbon::parse($startDate, $timezone)->startOfDay();
-                $end = Carbon::parse($endDate, $timezone)->endOfDay();
-
-                if ($start->gt($end)) {
-                    return [
-                        'status' => 'error',
-                        'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir.',
-                        'code' => 400
-                    ];
-                }
-
-                $query->whereBetween('created_at', [$start, $end]);
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($startDate) {
-            try {
-                $start = Carbon::parse($startDate, $timezone)->startOfDay();
-                $query->where('created_at', '>=', $start);
-            } catch (\Exception $e) {
-                return [
-                    'status' => 'error',
-                    'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.',
-                    'code' => 400
-                ];
-            }
-        } elseif ($range) {
-            $now = Carbon::now($timezone);
-            switch ($range) {
-                case 'harian':
-                    $query->whereDate('created_at', $now->toDateString());
-                    break;
-                case 'mingguan':
-                    $query->whereBetween('created_at', [$now->startOfWeek(), $now->endOfWeek()]);
-                    break;
-                case 'bulanan':
-                    $query->whereMonth('created_at', $now->month)
-                        ->whereYear('created_at', $now->year);
-                    break;
-                case 'tahunan':
-                    $query->whereYear('created_at', $now->year);
-                    break;
-                default:
-                    return [
-                        'status' => 'error',
-                        'message' => 'Range tidak valid. Gunakan: harian, mingguan, bulanan, atau tahunan.',
-                        'code' => 400
-                    ];
-            }
-        }
-
-        $withdrawalHistory = $query->paginate($perPage);
+        $withdrawalHistory = $this->transactionRepository->getWithdrawalHistory(
+            $status,
+            $startDate,
+            $endDate,
+            $specificDate,
+            $range,
+            $perPage
+        );
 
         if ($withdrawalHistory->isEmpty()) {
-            return [
-                'status' => 'error',
-                'message' => 'Tidak ada riwayat pencairan saldo kantin.',
-                'code' => 404
-            ];
+            return HandleServiceResponse::errorResponse('Tidak ada riwayat pencairan saldo kantin.', 404);
         }
 
-        return [
-            'status' => 'success',
-            'message' => 'Riwayat pencairan saldo kantin berhasil didapatkan.',
-            'code' => 200,
-            'data' => $withdrawalHistory
-        ];
-
-    } catch (\Exception $e) {
-        return [
-            'status' => 'error',
-            'message' => 'Gagal mengambil riwayat pencairan saldo kantin.',
-            'code' => 500,
-        ];
+        return HandleServiceResponse::successResponse('Kantin berhasil dibuka.', [$withdrawalHistory], 200);
     }
-}
-    
 }
