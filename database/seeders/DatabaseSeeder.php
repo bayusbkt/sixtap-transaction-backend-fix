@@ -19,6 +19,7 @@ class DatabaseSeeder extends Seeder
             'email' => 'bayusubekti@email.com',
             'password' => Hash::make('bayu123'),
             'phone' => '081234567890',
+            'nis' => '260803',
             'pin' => Hash::make('123456'),
             'role_id' => 2,
             'batch' => "2025",
