@@ -137,7 +137,7 @@ class TransactionRepository
     ): LengthAwarePaginator {
         $query = Transaction::query()
             ->with([
-                'user:id,name,batch,schoolclass_id',
+                'user:id,name,nis,batch,schoolclass_id',
                 'user.schoolClass:id,class_name',
                 'rfidCard:id,card_uid',
                 'canteen:id,initial_balance,current_balance,opened_at,opened_by',
