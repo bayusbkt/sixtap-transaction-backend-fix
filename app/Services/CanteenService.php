@@ -96,7 +96,7 @@ class CanteenService
 
             DB::commit();
 
-            return HandleServiceResponse::successResponse('Kantin berhasil diselesaikan.', [
+            return HandleServiceResponse::successResponse('Kantin berhasil di-settle.', [
                 'canteen_id' => $canteen->id,
                 'initial_balance' => $canteen->initial_balance,
                 'current_balance' => $canteen->current_balance,
@@ -110,7 +110,7 @@ class CanteenService
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
-            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat menutup kantin.', 500);
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat settle kantin.', 500);
         }
     }
 
@@ -138,7 +138,7 @@ class CanteenService
 
             if (!empty($canteen->closed_at)) {
                 DB::rollBack();
-                return HandleServiceResponse::errorResponse('Kantin sudah ditutup sebelumnya', 404);
+                return HandleServiceResponse::errorResponse('Kantin sudah ditutup sebelumnya.', 404);
             }
 
             $this->canteenRepository->updateCanteen($canteen, [
@@ -228,6 +228,11 @@ class CanteenService
         );
 
         $canteens = $paginatedCanteens->items();
+
+        if (empty($canteens)) {
+            return HandleServiceResponse::errorResponse('Tidak ada data riwayat modal awal kantin yang ditemukan.', 404);
+        }
+
         $historyData = [];
         $totalInitialFund = 0;
 
@@ -286,7 +291,7 @@ class CanteenService
         $canteens = $paginatedCanteens->items();
 
         if (empty($canteens)) {
-            return HandleServiceResponse::errorResponse('Tidak ada riwayat pendapatan kantin berdasarkan ID ini', 404);
+            return HandleServiceResponse::errorResponse('Tidak ada riwayat pemasukan kantin berdasarkan ID ini.', 404);
         }
 
         $historyData = [];
@@ -344,6 +349,11 @@ class CanteenService
         );
 
         $canteens = $paginatedCanteens->items();
+
+        if (empty($canteens)) {
+            return HandleServiceResponse::errorResponse('Tidak ada data riwayat pemasukan kantin yang ditemukan.', 404);
+        }
+
         $historyData = [];
         $totalIncome = 0;
         $totalProfit = 0;
@@ -367,7 +377,7 @@ class CanteenService
             ];
         }
 
-        return HandleServiceResponse::successResponse('Riwayat pendapatan kantin berhasil diambil.', [
+        return HandleServiceResponse::successResponse('Riwayat pendapatan seluruh kantin berhasil diambil.', [
             'history' => $historyData,
             'summary' => [
                 'total_sessions' => count($historyData),

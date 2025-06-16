@@ -76,7 +76,7 @@ class TransactionService
                 'Kesalahan pada server.'
             );
 
-            return HandleServiceResponse::errorResponse('Top up gagal', 500);
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan pada server saat memproses top up', 500);
         }
     }
 
@@ -130,6 +130,11 @@ class TransactionService
         ?string $range,
         int $perPage
     ): array {
+        $validationResult = $this->validateDateParameters($startDate, $endDate, $specificDate, $range);
+        if ($validationResult) {
+            return $validationResult;
+        }
+
         $topUpHistory = $this->transactionRepository->getTopUpHistory(
             $startDate,
             $endDate,
@@ -217,7 +222,7 @@ class TransactionService
             if ($amount > 20000) {
                 if (!$pin) {
                     DB::rollback();
-                    return HandleServiceResponse::errorResponse('PIN diperlukan untuk transaksi di atas Rp 20.000', 422);
+                    return HandleServiceResponse::errorResponse('PIN diperlukan untuk transaksi di atas Rp 20.000.', 422);
                 }
 
                 if (!Hash::check($pin, $card->user->pin)) {
@@ -386,7 +391,7 @@ class TransactionService
             ];
         }
 
-        return HandleServiceResponse::successResponse('Kantin berhasil dibuka.', [$response], 200);
+        return HandleServiceResponse::successResponse('Detail pembelian berhasil didapatkan.', [$response], 200);
     }
 
     public function getCanteenTransactionHistory(
@@ -400,6 +405,11 @@ class TransactionService
     ): array {
         $validTypes = ['pembelian', 'refund', 'pencairan'];
         $validStatus = ['berhasil', 'menunggu', 'gagal'];
+
+        $validationResult = $this->validateDateParameters($startDate, $endDate, $specificDate, $range);
+        if ($validationResult) {
+            return $validationResult;
+        }
 
         if ($type && !in_array($type, $validTypes)) {
             return HandleServiceResponse::errorResponse('Tipe transaksi tidak valid. Hanya pembelian, refund, dan pencairan yang diizinkan.', 400);
@@ -420,10 +430,27 @@ class TransactionService
         );
 
         if ($transactionHistory->isEmpty()) {
-            return HandleServiceResponse::errorResponse('Tidak ada riwayat transaksi.', 404);
+            $typeMessage = match ($type) {
+                'top up' => 'top up',
+                'pembelian' => 'pembelian',
+                'refund' => 'refund',
+                'pencairan' => 'pencairan',
+                default => 'transaksi',
+            };
+
+            return HandleServiceResponse::errorResponse('Tidak ada riwayat ' . $typeMessage . '.', 404);
         }
 
-        return HandleServiceResponse::successResponse('Kantin berhasil dibuka.', [$transactionHistory], 200);
+
+        $typeMessage = match ($type) {
+            'top up' => 'top up',
+            'pembelian' => 'pembelian',
+            'refund' => 'refund',
+            'pencairan' => 'pencairan',
+            default => 'transaksi',
+        };
+
+        return HandleServiceResponse::successResponse('Riwayat ' . $typeMessage . ' berhasil didapatkan.', [$transactionHistory], 200);
     }
 
     public function getPersonalTransactionHistory(
@@ -438,6 +465,11 @@ class TransactionService
     ): array {
         $validTypes = ['top up', 'pembelian', 'refund'];
         $validStatus = ['berhasil', 'gagal'];
+
+        $validationResult = $this->validateDateParameters($startDate, $endDate, $specificDate, $range);
+        if ($validationResult) {
+            return $validationResult;
+        }
 
         if ($type && !in_array($type, $validTypes)) {
             return HandleServiceResponse::errorResponse('Tipe transaksi tidak valid. Hanya top up, pembelian, dan refund yang diizinkan.', 400);
@@ -459,10 +491,25 @@ class TransactionService
         );
 
         if ($transactionHistory->isEmpty()) {
-            return HandleServiceResponse::errorResponse('Tidak ada riwayat transaksi.', 404);
+            $typeMessage = match ($type) {
+                'top up' => 'top up',
+                'pembelian' => 'pembelian',
+                'refund' => 'refund',
+                default => 'transaksi',
+            };
+
+            return HandleServiceResponse::errorResponse('Tidak ada riwayat ' . $typeMessage . '.', 404);
         }
 
-        return HandleServiceResponse::successResponse('Riwayat transaksi berhasil didapatkan..', [$transactionHistory], 200);
+
+        $typeMessage = match ($type) {
+            'top up' => 'top up',
+            'pembelian' => 'pembelian',
+            'refund' => 'refund',
+            default => 'transaksi',
+        };
+
+        return HandleServiceResponse::successResponse('Riwayat ' . $typeMessage . ' berhasil didapatkan.', [$transactionHistory], 200);
     }
 
     public function handleRefundTransaction(int $transactionId, int $canteenOpenerId, string $note): array
@@ -574,7 +621,6 @@ class TransactionService
 
     public function getRefundDetail(int $userId, int $refundTransactionId): array
     {
-        try {
             $user = $this->transactionRepository->findUserById($userId);
 
             if (!$user) {
@@ -676,10 +722,7 @@ class TransactionService
                 ];
             }
 
-            return HandleServiceResponse::successResponse('Kantin berhasil dibuka.', [$response]);
-        } catch (\Exception $e) {
-            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat memproses detail refund.', 500);
-        }
+            return HandleServiceResponse::successResponse('Detail refund berhasil didapatkan.', [$response]);
     }
 
     public function requestCanteenBalanceExchange(int $canteenId, int $amount): array
@@ -701,7 +744,7 @@ class TransactionService
 
             if ($canteen->current_balance < $amount) {
                 DB::rollback();
-                return HandleServiceResponse::errorResponse('Saldo kantin tidak mencukupi untuk pencairan saldo kantin.', 422);
+                return HandleServiceResponse::errorResponse('Saldo kantin tidak mencukupi untuk memproses pencairan.', 422);
             }
 
             if ($amount <= 0) {
@@ -713,7 +756,7 @@ class TransactionService
 
             if ($existingRequest) {
                 DB::rollback();
-                return HandleServiceResponse::errorResponse('Masih ada permintaan pencairan yang belum diproses untuk kantin ini.', 422);
+                return HandleServiceResponse::errorResponse('Masih ada permintaan pencairan yang belum disetujui untuk kantin ini.', 422);
             }
 
             $transaction = $this->transactionRepository->createTransaction([
@@ -738,7 +781,7 @@ class TransactionService
                 'timestamp' => $transaction->created_at
             ];
 
-            return HandleServiceResponse::successResponse('Kantin berhasil dibuka.', [$responseData], 200);
+            return HandleServiceResponse::successResponse('Permintaan pencairan berhasil. Silahkan tunggu persetujuan dari admin.', [$responseData], 200);
         } catch (\Exception $e) {
             DB::rollback();
 
@@ -752,7 +795,7 @@ class TransactionService
                     $canteenId,
                     $amount,
                     'pencairan',
-                    'Kesalahan pada server saat mengajukan permintaan pencairan dana.'
+                    'Kesalahan pada server saat mengajukan permintaan pencairan saldo kantin.'
                 );
             }
 
@@ -850,7 +893,7 @@ class TransactionService
                 'timestamp' => now()
             ];
 
-            return HandleServiceResponse::successResponse('Kantin berhasil dibuka.', [$responseData]);
+            return HandleServiceResponse::successResponse('Permintaan pencairan saldo berhasil ditolak.', [$responseData]);
         } catch (\Exception $e) {
             DB::rollback();
             return HandleServiceResponse::errorResponse('Terjadi kesalahan saat memproses penolakan pencairan saldo kantin', 500);
@@ -912,9 +955,9 @@ class TransactionService
                 ];
             }
 
-            return HandleServiceResponse::successResponse('Kantin berhasil dibuka.', [$response]);
+            return HandleServiceResponse::successResponse('Berhasil mendapatkan detail pencairan saldo kantin.', [$response]);
         } catch (\Exception $e) {
-            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat memproses detail pencairan.', 404);
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan saat memproses detail pencairan saldo kantin.', 404);
         }
     }
 
@@ -941,10 +984,15 @@ class TransactionService
         ?string $range,
         int $perPage
     ): array {
-        $validStatus = ['berhasil', 'menunggu', 'gagal'];
+        $validStatus = ['berhasil', 'gagal'];
+
+        $validationResult = $this->validateDateParameters($startDate, $endDate, $specificDate, $range);
+        if ($validationResult) {
+            return $validationResult;
+        }
 
         if ($status && !in_array($status, $validStatus)) {
-            return HandleServiceResponse::errorResponse('Status tidak valid. Hanya berhasil, menunggu, dan gagal yang diizinkan.', 400);
+            return HandleServiceResponse::errorResponse('Status tidak valid. Hanya berhasil dan gagal yang diizinkan.', 400);
         }
 
         $withdrawalHistory = $this->transactionRepository->getWithdrawalHistory(
@@ -960,6 +1008,35 @@ class TransactionService
             return HandleServiceResponse::errorResponse('Tidak ada riwayat pencairan saldo kantin.', 404);
         }
 
-        return HandleServiceResponse::successResponse('Kantin berhasil dibuka.', [$withdrawalHistory], 200);
+        return HandleServiceResponse::successResponse('Riwayat pencairan berhasil didapatkan.', [$withdrawalHistory], 200);
+    }
+
+    private function validateDateParameters(
+        ?string $startDate,
+        ?string $endDate,
+        ?string $specificDate,
+        ?string $range
+    ): ?array {
+        if ($specificDate && !$this->transactionRepository->validateDateFormat($specificDate)) {
+            return HandleServiceResponse::errorResponse('Format tanggal tidak valid. Gunakan format YYYY-MM-DD.', 400);
+        }
+
+        if ($startDate && !$this->transactionRepository->validateDateFormat($startDate)) {
+            return HandleServiceResponse::errorResponse('Format tanggal tidak valid. Gunakan format YYYY-MM-DD.', 400);
+        }
+
+        if ($endDate && !$this->transactionRepository->validateDateFormat($endDate)) {
+            return HandleServiceResponse::errorResponse('Format tanggal tidak valid. Gunakan format YYYY-MM-DD.', 400);
+        }
+
+        if ($startDate && $endDate && !$this->transactionRepository->validateDateRange($startDate, $endDate)) {
+            return HandleServiceResponse::errorResponse('Tanggal mulai tidak boleh lebih besar dari tanggal akhir.', 400);
+        }
+
+        if ($range && !$this->transactionRepository->isValidRange($range)) {
+            return HandleServiceResponse::errorResponse('Range tidak valid. Gunakan: harian, mingguan, bulanan, atau tahunan.', 400);
+        }
+
+        return null;
     }
 }

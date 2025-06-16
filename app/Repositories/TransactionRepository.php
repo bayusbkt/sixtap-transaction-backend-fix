@@ -357,4 +357,30 @@ class TransactionRepository
             }
         }
     }
+
+    public function validateDateFormat(string $date)
+    {
+        try {
+            Carbon::parse($date);
+            return true;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    public function validateDateRange(string $startDate, string $endDate)
+    {
+        try {
+            $start = Carbon::parse($startDate);
+            $end = Carbon::parse($endDate);
+            return $start->lte($end);
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    public function isValidRange(string $range)
+    {
+        return in_array($range, ['harian', 'mingguan', 'bulanan', 'tahunan']);
+    }
 }

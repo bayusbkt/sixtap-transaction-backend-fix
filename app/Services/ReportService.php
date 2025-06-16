@@ -89,7 +89,7 @@ class ReportService
                 'generated_at' => now()->format('Y-m-d H:i:s'),
             ]);
         } catch (\Exception $e) {
-            return HandleServiceResponse::errorResponse('Terjadi kesalahan pada sisi server.', 500);
+            return HandleServiceResponse::errorResponse('Terjadi kesalahan pada sisi server saat membuat laporan transaksi.', 500);
         }
     }
 

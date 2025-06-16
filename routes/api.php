@@ -1,4 +1,4 @@
-<?php
+    <?php
 
 use App\Http\Controllers\CanteenController;
 use App\Http\Controllers\ReportController;
@@ -53,7 +53,7 @@ Route::middleware(['jwt.verify', 'role:penjaga kantin'])->group(function () {
 
 //API Admin dan Petinggi Sekolah
 Route::middleware(['jwt.verify', 'role:admin,petinggi sekolah'])->group(function () {
-    Route::post('/report/transaction', [ReportController::class, 'transactionReport']);
+    Route::post('/transaction/report', [ReportController::class, 'transactionReport']);
 });
 
 //API Admin dan Penjaga Kantin
