@@ -28,7 +28,7 @@ class UserFactory extends Factory
             'nis' => $role == 2 ? $this->faker->numerify('##########') : null,
             'nip' => in_array($role, [3, 4, 5]) ? $this->faker->numerify('############') : null,
             'batch' => rand(2015, 2025),
-            'photo' => null,
+            'photo_filename' => null,
             'role_id' => $role,
             'schoolclass_id' => $role == 2 ? rand(1, 9) : null,
         ];

@@ -359,6 +359,7 @@ class TransactionService
                     'id' => $transaction->user->id,
                     'name' => $transaction->user->name,
                     'email' => $transaction->user->email,
+                    'nis' => $transaction->user->nis,
                     'batch' => $transaction->user->batch,
                     'class' => $transaction->user->schoolClass->class_name,
                     'rfid_card_uid' => $transaction->rfidCard->card_uid
