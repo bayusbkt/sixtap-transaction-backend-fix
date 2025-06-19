@@ -117,7 +117,7 @@ class TransactionRepository
     public function findPurchaseTransactionWithRelations(int $transactionId)
     {
         return Transaction::with([
-            'user:id,name,batch,schoolclass_id',
+            'user:id,name,batch,email,nis,schoolclass_id',
             'user.schoolClass:id,class_name',
             'rfidCard:id,card_uid',
             'canteen:id,initial_balance,current_balance,opened_at,opened_by',

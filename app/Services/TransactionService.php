@@ -194,7 +194,7 @@ class TransactionService
             }
 
             if ($wallet->balance < $amount) {
-                return HandleServiceResponse::errorResponse('Saldo tidak mencukupi', 422);
+                return HandleServiceResponse::errorResponse('Saldo tidak mencukupi.', 422);
             }
 
             return HandleServiceResponse::successResponse('Validasi transaksi pembelian berhasil.', ['canteen_id' => $canteen->id], 200);
