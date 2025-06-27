@@ -12,7 +12,7 @@ class WalletRepository
         return Wallet::where('user_id', $userId)->first();
     }
 
-    public function findUser(int $userId): ?User
+    public function findUser(int $userId)
     {
         return User::find($userId);
     }

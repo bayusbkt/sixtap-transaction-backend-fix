@@ -17,27 +17,16 @@ class TransactionFactory extends Factory
 
     public function definition(): array
     {
-        $user = User::where('role_id', 2)->inRandomOrder()->first();
-
-        if (!$user) {
-            $user = User::factory()->create(['role_id' => 2]);
-        }
-
-        $rfidCard = $user->rfidCard ?? RfidCard::factory()->for($user)->create();
-
-        $canteen = Canteen::inRandomOrder()->first() ?? Canteen::factory()->create();
-
         $type = $this->faker->randomElement(['pembelian', 'top up', 'refund', 'pencairan']);
 
-        $status = match ($type) {
-            'pencairan' => $this->faker->randomElement(['berhasil', 'menunggu', 'gagal']),
-            default     => $this->faker->randomElement(['berhasil', 'gagal']),
-        };
+        $status = $type === 'pencairan'
+            ? $this->faker->randomElement(['berhasil', 'menunggu', 'gagal'])
+            : $this->faker->randomElement(['berhasil', 'gagal']);
 
         return [
-            'user_id'       => $user->id,
-            'rfid_card_id'  => $rfidCard->id,
-            'canteen_id'    => $canteen->id,
+            'user_id'       => User::factory(),
+            'rfid_card_id'  => RfidCard::factory(),
+            'canteen_id'    => Canteen::factory(),
             'type'          => $type,
             'status'        => $status,
             'amount'        => $this->faker->randomFloat(2, 1000, 50000),

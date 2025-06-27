@@ -54,13 +54,11 @@ class TransactionService
                 'amount' => $amount,
             ]);
 
-            $dataCard = $card->load('user');
-
             DB::commit();
 
-            HandleEmailNotification::topUp($dataCard->user, $amount, $newBalance, $transaction->id);
+            HandleEmailNotification::topUp($card->user, $amount, $newBalance, $transaction->id);
 
-            return HandleServiceResponse::successResponse('Top up berhasil.', [$dataCard], 200);
+            return HandleServiceResponse::successResponse('Top up berhasil.', [$card], 200);
         } catch (\Exception $e) {
             DB::rollback();
 
@@ -178,7 +176,6 @@ class TransactionService
             }
 
             $canteen = $this->transactionRepository->findOpenCanteenByOpener($canteenOpenerId);
-
             if (!$canteen) {
                 return HandleServiceResponse::errorResponse('Tidak ada kantin yang sedang dibuka oleh pengguna ini.', 404);
             }
@@ -188,7 +185,6 @@ class TransactionService
             }
 
             $wallet = $this->transactionRepository->findWalletByUserId($card->user_id);
-
             if (!$wallet) {
                 return HandleServiceResponse::errorResponse('Wallet pengguna tidak ditemukan.', 404);
             }
@@ -310,7 +306,6 @@ class TransactionService
                     'Kesalahan pada server.'
                 );
             }
-
             return HandleServiceResponse::errorResponse('Terjadi kesalahan saat memproses transaksi pembelian.', 500);
         }
     }
@@ -391,7 +386,6 @@ class TransactionService
                 'current_balance' => (int) $transaction->canteen->current_balance
             ];
         }
-
         return HandleServiceResponse::successResponse('Detail pembelian berhasil didapatkan.', [$response], 200);
     }
 
@@ -622,108 +616,106 @@ class TransactionService
 
     public function getRefundDetail(int $userId, int $refundTransactionId): array
     {
-            $user = $this->transactionRepository->findUserById($userId);
+        $user = $this->transactionRepository->findUserById($userId);
 
-            if (!$user) {
-                return HandleServiceResponse::errorResponse('Pengguna tidak ditemukan.', 404);
-            }
+        if (!$user) {
+            return HandleServiceResponse::errorResponse('Pengguna tidak ditemukan.', 404);
+        }
 
-            $refundTransaction = $this->transactionRepository->findRefundTransaction($refundTransactionId);
+        $refundTransaction = $this->transactionRepository->findRefundTransaction($refundTransactionId);
 
-            if (!$refundTransaction) {
-                return HandleServiceResponse::errorResponse('Transaksi refund tidak ditemukan.', 404);
-            }
+        if (!$refundTransaction) {
+            return HandleServiceResponse::errorResponse('Transaksi refund tidak ditemukan.', 404);
+        }
 
-            $originalTransactionId = null;
-            if (preg_match('/Refund untuk transaksi ID: (\d+)/', $refundTransaction->note, $matches)) {
-                $originalTransactionId = (int)$matches[1];
-            }
+        $originalTransactionId = null;
+        if (preg_match('/Refund untuk transaksi ID: (\d+)/', $refundTransaction->note, $matches)) {
+            $originalTransactionId = (int)$matches[1];
+        }
 
-            $originalTransaction = null;
-            if ($originalTransactionId) {
-                $originalTransaction = $this->transactionRepository->findOriginalTransaction($originalTransactionId);
-            }
+        $originalTransaction = null;
+        if ($originalTransactionId) {
+            $originalTransaction = $this->transactionRepository->findOriginalTransaction($originalTransactionId);
+        }
 
-            $isStudent = strtolower($user->role->role_name) === 'siswa';
+        $isStudent = strtolower($user->role->role_name) === 'siswa';
+        if ($isStudent && $refundTransaction->user_id !== $userId) {
+            return HandleServiceResponse::errorResponse('Anda tidak memiliki akses ke transaksi ini.', 403);
+        }
 
-            if ($isStudent && $refundTransaction->user_id !== $userId) {
-                return HandleServiceResponse::errorResponse('Anda tidak memiliki akses ke transaksi ini.', 403);
-            }
+        $walletAfterRefund = $this->transactionRepository->findWalletByUserId($refundTransaction->user_id);
+        if (!$walletAfterRefund) {
+            return HandleServiceResponse::errorResponse('Wallet pengguna tidak ditemukan.', 404);
+        }
 
-            $walletAfterRefund = $this->transactionRepository->findWalletByUserId($refundTransaction->user_id);
+        $walletBalanceBeforeRefund = $walletAfterRefund ?
+            $walletAfterRefund->balance - $refundTransaction->amount : 0;
 
-            if (!$walletAfterRefund) {
-                return HandleServiceResponse::errorResponse('Wallet pengguna tidak ditemukan.', 404);
-            }
+        $customNote = '';
+        if (strpos($refundTransaction->note, ' - ') !== false) {
+            $parts = explode(' - ', $refundTransaction->note, 2);
+            $customNote = $parts[1] ?? '';
+        }
 
-            $walletBalanceBeforeRefund = $walletAfterRefund ?
-                $walletAfterRefund->balance - $refundTransaction->amount : 0;
-
-            $customNote = '';
-            if (strpos($refundTransaction->note, ' - ') !== false) {
-                $parts = explode(' - ', $refundTransaction->note, 2);
-                $customNote = $parts[1] ?? '';
-            }
-
-            $response = [
-                'status' => 'success',
-                'message' => 'Detail refund berhasil didapatkan.',
-                'code' => 200,
-                'data' => [
-                    'refund_info' => [
-                        'refund_transaction_id' => $refundTransaction->id,
-                        'original_transaction_id' => $originalTransactionId,
-                        'refund_amount' => $refundTransaction->amount,
-                        'refund_date' => $refundTransaction->created_at,
-                        'custom_note' => $customNote,
-                        'full_note' => $refundTransaction->note
-                    ],
-                    'user_info' => [
-                        'id' => $refundTransaction->user->id,
-                        'name' => $refundTransaction->user->name,
-                        'email' => $refundTransaction->user->email ?? null,
-                        'batch' => $refundTransaction->user->batch,
-                        'class' => $refundTransaction->user->schoolClass->class_name ?? null,
-                        'rfid_card_uid' => $refundTransaction->rfidCard->card_uid ?? null
-                    ],
-                    'wallet_info' => [
-                        'balance_before_refund' => $walletBalanceBeforeRefund,
-                        'balance_after_refund' => $walletAfterRefund->balance ?? 0,
-                    ],
-                    'original_transaction' => [
-                        'transaction_id' => $originalTransaction->id,
-                        'purchase_date' => $originalTransaction->created_at,
-                        'amount' => $originalTransaction->amount,
-                        'canteen_session' => [
-                            'opened_by' => [
-                                'id' => $originalTransaction->canteen->opener->id ?? null,
-                                'name' => $originalTransaction->canteen->opener->name ?? null
-                            ]
+        $response = [
+            'status' => 'success',
+            'message' => 'Detail refund berhasil didapatkan.',
+            'code' => 200,
+            'data' => [
+                'refund_info' => [
+                    'refund_transaction_id' => $refundTransaction->id,
+                    'original_transaction_id' => $originalTransactionId,
+                    'refund_amount' => $refundTransaction->amount,
+                    'refund_date' => $refundTransaction->created_at,
+                    'custom_note' => $customNote,
+                    'full_note' => $refundTransaction->note
+                ],
+                'user_info' => [
+                    'id' => $refundTransaction->user->id,
+                    'name' => $refundTransaction->user->name,
+                    'email' => $refundTransaction->user->email ?? null,
+                    'batch' => $refundTransaction->user->batch,
+                    'class' => $refundTransaction->user->schoolClass->class_name ?? null,
+                    'rfid_card_uid' => $refundTransaction->rfidCard->card_uid ?? null
+                ],
+                'wallet_info' => [
+                    'balance_before_refund' => $walletBalanceBeforeRefund,
+                    'balance_after_refund' => $walletAfterRefund->balance ?? 0,
+                ],
+                'original_transaction' => [
+                    'transaction_id' => $originalTransaction->id,
+                    'purchase_date' => $originalTransaction->created_at,
+                    'amount' => $originalTransaction->amount,
+                    'canteen_session' => [
+                        'opened_by' => [
+                            'id' => $originalTransaction->canteen->opener->id ?? null,
+                            'name' => $originalTransaction->canteen->opener->name ?? null
                         ]
+                    ]
+                ]
+            ]
+        ];
+
+        if (!$isStudent) {
+            $response['data']['canteen_info'] = [
+                'canteen_id' => $refundTransaction->canteen->id,
+                'canteen_session' => [
+                    'opened_at' => $refundTransaction->canteen->opened_at,
+                    'closed_at' => $refundTransaction->canteen->closed_at ?? null,
+                    'opened_by' => [
+                        'id' => $refundTransaction->canteen->opener->id ?? null,
+                        'name' => $refundTransaction->canteen->opener->name ?? null
                     ]
                 ]
             ];
 
-            if (!$isStudent) {
-                $response['data']['canteen_info'] = [
-                    'canteen_id' => $refundTransaction->canteen->id,
-                    'canteen_session' => [
-                        'opened_at' => $refundTransaction->canteen->opened_at,
-                        'closed_at' => $refundTransaction->canteen->closed_at ?? null,
-                        'opened_by' => [
-                            'id' => $refundTransaction->canteen->opener->id ?? null,
-                            'name' => $refundTransaction->canteen->opener->name ?? null
-                        ]
-                    ]
-                ];
+            $response['data']['canteen_balance_info'] = [
+                'initial_balance' => $refundTransaction->canteen->initial_balance,
+                'current_balance' => $refundTransaction->canteen->current_balance
+            ];
+        }
 
-                $response['data']['canteen_balance_info'] = [
-                    'initial_balance' => $refundTransaction->canteen->initial_balance,
-                    'current_balance' => $refundTransaction->canteen->current_balance
-                ];
-            }
-
-            return HandleServiceResponse::successResponse('Detail refund berhasil didapatkan.', [$response]);
+        return HandleServiceResponse::successResponse('Detail refund berhasil didapatkan.', [$response]);
     }
 
     public function requestCanteenBalanceExchange(int $canteenId, int $amount): array
@@ -782,7 +774,7 @@ class TransactionService
                 'timestamp' => $transaction->created_at
             ];
 
-            return HandleServiceResponse::successResponse('Permintaan pencairan berhasil. Silahkan tunggu persetujuan dari admin.', [$responseData], 200);
+            return HandleServiceResponse::successResponse('Permintaan pencairan berhasil. Silahkan tunggu persetujuan dari admin.', $responseData, 200);
         } catch (\Exception $e) {
             DB::rollback();
 
@@ -917,23 +909,19 @@ class TransactionService
             }
 
             $response = [
-                'status' => 'success',
-                'message' => 'Detail pencairan berhasil didapatkan.',
-                'code' => 200,
-                'data' => [
-                    'withdrawal_info' => [
-                        'withdrawal_transaction_id' => $withdrawalTransaction->id,
-                        'withdrawal_amount' => (int) $withdrawalTransaction->amount,
-                        'withdrawal_date' => $withdrawalTransaction->created_at,
-                        'status' => $withdrawalTransaction->status,
-                        'custom_note' => $customNote,
-                        'full_note' => $withdrawalTransaction->note
-                    ],
-                    'user_info' => [
-                        'id' => $withdrawalTransaction->user->id,
-                        'name' => $withdrawalTransaction->user->name,
-                        'email' => $withdrawalTransaction->user->email ?? null,
-                    ]
+
+                'withdrawal_info' => [
+                    'withdrawal_transaction_id' => $withdrawalTransaction->id,
+                    'withdrawal_amount' => (int) $withdrawalTransaction->amount,
+                    'withdrawal_date' => $withdrawalTransaction->created_at,
+                    'status' => $withdrawalTransaction->status,
+                    'custom_note' => $customNote,
+                    'full_note' => $withdrawalTransaction->note
+                ],
+                'user_info' => [
+                    'id' => $withdrawalTransaction->user->id,
+                    'name' => $withdrawalTransaction->user->name,
+                    'email' => $withdrawalTransaction->user->email ?? null,
                 ]
             ];
 

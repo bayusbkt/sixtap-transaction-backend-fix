@@ -228,7 +228,7 @@ class TransactionRepository
         return Transaction::where('id', $originalTransactionId)
             ->where('type', 'pembelian')
             ->with([
-                'user:id,name,',
+                'user:id,name',
                 'rfidCard:id,card_uid',
                 'canteen:id,opened_by',
                 'canteen.opener:id,name'

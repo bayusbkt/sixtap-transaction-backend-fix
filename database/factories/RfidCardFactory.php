@@ -18,14 +18,21 @@ class RfidCardFactory extends Factory
      */
     public function definition(): array
     {
-        $user = User::inRandomOrder()->where('role_id', 2)->first();
-        
         return [
-            'user_id' => $user?->id,
+            'user_id' => User::factory(),
             'card_uid' => strtoupper(Str::random(10)),
             'is_active' => true,
             'activated_at' => now(),
             'blocked_at' => null,
         ];
+    }
+
+    public function inactive()
+    {
+        return $this->state(function (array $attributes) {
+            return [
+                'is_active' => false,
+            ];
+        });
     }
 }
