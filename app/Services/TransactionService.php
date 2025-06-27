@@ -341,25 +341,20 @@ class TransactionService
         }
 
         $response = [
-            'status' => 'success',
-            'message' => 'Detail pembelian berhasil didapatkan',
-            'code' => 200,
-            'data' => [
-                'purchase_info' => [
-                    'purchase_transaction_id' => $transaction->id,
-                    'purchase_amount' => (int) $transaction->amount,
-                    'purchase_date' => $transaction->created_at,
-                ],
-                'user_info' => [
-                    'id' => $transaction->user->id,
-                    'name' => $transaction->user->name,
-                    'email' => $transaction->user->email,
-                    'nis' => $transaction->user->nis,
-                    'batch' => $transaction->user->batch,
-                    'class' => $transaction->user->schoolClass->class_name,
-                    'rfid_card_uid' => $transaction->rfidCard->card_uid
-                ],
-            ]
+            'purchase_info' => [
+                'purchase_transaction_id' => $transaction->id,
+                'purchase_amount' => (int) $transaction->amount,
+                'purchase_date' => $transaction->created_at,
+            ],
+            'user_info' => [
+                'id' => $transaction->user->id,
+                'name' => $transaction->user->name,
+                'email' => $transaction->user->email,
+                'nis' => $transaction->user->nis,
+                'batch' => $transaction->user->batch,
+                'class' => $transaction->user->schoolClass->class_name,
+                'rfid_card_uid' => $transaction->rfidCard->card_uid
+            ],
         ];
 
         if ($isStudent) {
@@ -513,7 +508,6 @@ class TransactionService
             DB::beginTransaction();
 
             $originalTransaction = $this->transactionRepository->findSuccessfulPurchaseTransaction($transactionId);
-
             if (!$originalTransaction) {
                 DB::rollback();
                 return HandleServiceResponse::errorResponse('Transaksi pembelian tidak ditemukan atau sudah di-refund.', 404);
@@ -595,7 +589,6 @@ class TransactionService
             return HandleServiceResponse::successResponse('Refund transaksi berhasil dilakukan.', [$responseData], 200);
         } catch (\Exception $e) {
             DB::rollback();
-
             $userId = $originalTransaction->user_id ?? null;
             $cardId = $originalTransaction->rfid_card_id ?? null;
             $canteenId = $canteen->id ?? null;
@@ -658,39 +651,34 @@ class TransactionService
         }
 
         $response = [
-            'status' => 'success',
-            'message' => 'Detail refund berhasil didapatkan.',
-            'code' => 200,
-            'data' => [
-                'refund_info' => [
-                    'refund_transaction_id' => $refundTransaction->id,
-                    'original_transaction_id' => $originalTransactionId,
-                    'refund_amount' => $refundTransaction->amount,
-                    'refund_date' => $refundTransaction->created_at,
-                    'custom_note' => $customNote,
-                    'full_note' => $refundTransaction->note
-                ],
-                'user_info' => [
-                    'id' => $refundTransaction->user->id,
-                    'name' => $refundTransaction->user->name,
-                    'email' => $refundTransaction->user->email ?? null,
-                    'batch' => $refundTransaction->user->batch,
-                    'class' => $refundTransaction->user->schoolClass->class_name ?? null,
-                    'rfid_card_uid' => $refundTransaction->rfidCard->card_uid ?? null
-                ],
-                'wallet_info' => [
-                    'balance_before_refund' => $walletBalanceBeforeRefund,
-                    'balance_after_refund' => $walletAfterRefund->balance ?? 0,
-                ],
-                'original_transaction' => [
-                    'transaction_id' => $originalTransaction->id,
-                    'purchase_date' => $originalTransaction->created_at,
-                    'amount' => $originalTransaction->amount,
-                    'canteen_session' => [
-                        'opened_by' => [
-                            'id' => $originalTransaction->canteen->opener->id ?? null,
-                            'name' => $originalTransaction->canteen->opener->name ?? null
-                        ]
+            'refund_info' => [
+                'refund_transaction_id' => $refundTransaction->id,
+                'original_transaction_id' => $originalTransactionId,
+                'refund_amount' => $refundTransaction->amount,
+                'refund_date' => $refundTransaction->created_at,
+                'custom_note' => $customNote,
+                'full_note' => $refundTransaction->note
+            ],
+            'user_info' => [
+                'id' => $refundTransaction->user->id,
+                'name' => $refundTransaction->user->name,
+                'email' => $refundTransaction->user->email ?? null,
+                'batch' => $refundTransaction->user->batch,
+                'class' => $refundTransaction->user->schoolClass->class_name ?? null,
+                'rfid_card_uid' => $refundTransaction->rfidCard->card_uid ?? null
+            ],
+            'wallet_info' => [
+                'balance_before_refund' => $walletBalanceBeforeRefund,
+                'balance_after_refund' => $walletAfterRefund->balance ?? 0,
+            ],
+            'original_transaction' => [
+                'transaction_id' => $originalTransaction->id,
+                'purchase_date' => $originalTransaction->created_at,
+                'amount' => $originalTransaction->amount,
+                'canteen_session' => [
+                    'opened_by' => [
+                        'id' => $originalTransaction->canteen->opener->id ?? null,
+                        'name' => $originalTransaction->canteen->opener->name ?? null
                     ]
                 ]
             ]
